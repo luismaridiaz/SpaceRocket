@@ -2145,7 +2145,7 @@ class RocketRenderer3D {
   // nuestra simulacion no tarda lo mismo que la mision real (el TLI dispara mucho antes que
   // las 2h44m reales), asi que usar los tiempos historicos (162s/522s/702s) haria que una
   // etapa "cayera" en mitad del crucero translunar. Puramente decorativo -- no toca la fisica.
-  updateStageVisibility(missionPhase, stageIndex, simTime){
+  updateStageVisibility(missionPhase, stageIndex, simTime, alt){
     if (!missionPhase){ // sandbox sin piloto automatico: cohete completo, como siempre
       this.sICGroup.visible=true; this.sIIGroup.visible=true; this.sIVBGroup.visible=true; this.lmLegsGroup.visible=false;
       this.sICGroup.position.set(0,0,0); this.sICGroup.rotation.set(0,0,0);
@@ -2203,7 +2203,7 @@ class RocketRenderer3D {
     // creia que era Apolo llegando a la Luna: ocultaba el motor y mostraba el modulo
     // lunar en una nave que nunca deberia tenerlo (bug real, confirmado por Luis).
     const isIssMissionPhase = typeof window!=='undefined' && window.MISSION_CONFIG && window.MISSION_CONFIG.type==='iss';
-    const arrivedAtMoon = !isIssMissionPhase && (['loi_burn','descent','done'].includes(missionPhase) || String(missionPhase||'').startsWith('ret_'));
+    const arrivedAtMoon = !isIssMissionPhase && (['loi_burn','separation','descent','done'].includes(missionPhase) || String(missionPhase||'').startsWith('ret_'));
     let wantSIC = isAscent, wantSII = isAscent, wantSIVB = !arrivedAtMoon;
     // Saturno V -> ISS: la separacion visual sigue a la etapa fisica real (S-IC cae al pasar
     // a la etapa 1, S-II al pasar a la 2), no solo a la fase, que cambia mucho despues.
@@ -2219,7 +2219,7 @@ class RocketRenderer3D {
       const ph=String(missionPhase||''), ret=ph.startsWith('ret_');
       const dur=(cfgNow.transposition&&cfgNow.transposition.durS)||24;
       if (ph==='transposicion'){ if (this._tpT0==null) this._tpT0=simTime; tpU=Math.max(0,Math.min(1,(simTime-this._tpT0)/dur)); }
-      else if (['coast_tli','loi_burn','descent','done'].includes(ph) || ret) tpU=1;
+      else if (['coast_tli','loi_burn','separation','descent','done'].includes(ph) || ret) tpU=1;
       else this._tpT0=null;
       this._tpU=tpU;
       wantSIVB = ['ascent','park_coast','park_circ','coast_leo','tli_burn'].includes(ph) || (ph==='transposicion' && tpU<0.75);
@@ -2247,16 +2247,23 @@ class RocketRenderer3D {
         else { pivot=8.35; rot=Math.PI; }
       }
       if (ret){ pivot=7.15; rot=0; }
-      this.csmGroup.position.y=pivot; this.csmGroup.rotation.x=rot;
+      // Fase 7 (visual): en 'descent' el modulo de mando (Columbia) se queda en orbita (objetivo pasivo 'csm') y baja solo el LM (Eagle).
+      const separated = ['separation','descent','done','ret_wait','ret_ascent','ret_rdv'].includes(ph);
+      // El origen del modelo esta en la base de la S-IC; las patas del LM quedan ~5,4 por encima. Al llegar al suelo se baja todo
+      // el conjunto para que las patas toquen el suelo (rampa en los ultimos 50 m).
+      const landed = ['descent','done','ret_wait'].includes(ph);
+      const dyLand = landed ? -5.43*(1-Math.max(0,Math.min(1,(alt||0)/50))) : 0;
+      this.csmGroup.visible = !separated;
+      this.csmGroup.position.y=pivot+dyLand; this.csmGroup.rotation.x=rot;
       if (this.towerGroup) this.towerGroup.visible = !(u>0);
-      // LM: aparece al separarse el CSM y viaja acoplado hasta la Luna; durante el regreso el que queda es el de ascenso
       this.lmLegsGroup.visible = u>0 && !ret;
-      this.lmLegsGroup.position.y = 6.5;
+      this.lmLegsGroup.position.y = 6.5+dyLand;
       this.lmLegsGroup.scale.setScalar(Math.max(0.01,Math.min(1,u/0.15)));
       if (this.lmAscGroup){
-        const want = ph==='ret_orbit';
+        // etapa de ascenso: es la nave durante el despegue y el encuentro (ret_ascent, ret_rdv), luego va acoplada al modulo de mando (ret_orbit)
+        const want = ph==='ret_ascent' || ph==='ret_rdv' || ph==='ret_orbit';
         if (this.lmAscGroup.visible && !want && !alreadyFalling(this.lmAscGroup)) this._fallingStages.push({group:this.lmAscGroup, age:0});
-        if (want) this.lmAscGroup.visible=true;
+        if (want){ this.lmAscGroup.visible=true; this.lmAscGroup.position.y = (ph==='ret_orbit') ? 0 : -8.7; }
       }
     }
   }
@@ -2341,7 +2348,7 @@ class RocketRenderer3D {
   update(state, frameDt, missionPhase){
     const isGagarin = typeof window!=='undefined' && window.MISSION_CONFIG && window.MISSION_CONFIG.type==='gagarin';
     if (isGagarin) this.updateVostokVisibility(missionPhase);
-    else { this.updateStageVisibility(missionPhase, state.stageIndex, state.time); this.updateFallingStages(Math.min(0.1,frameDt||0.016)); }
+    else { this.updateStageVisibility(missionPhase, state.stageIndex, state.time, state.altitude); this.updateFallingStages(Math.min(0.1,frameDt||0.016)); }
     const shipAbs = new THREE.Vector3(state.shipAbs.x, state.shipAbs.y, state.shipAbs.z);
     // origen flotante: cada cuerpo se coloca en su posicion real MENOS la posicion real de la nave,
     // asi la nave siempre esta cerca de (0,0,0) sin importar si estamos junto a la Tierra o cerca de Pluton.
@@ -2446,7 +2453,9 @@ class RocketRenderer3D {
         }
       }
       if (this.earth) this.earth.visible = !low;
-      if (this.bloomPass) this.bloomPass.threshold = low ? 0.85 : 0.45; // sin esto el suelo/pad claros inundan la imagen
+      const lowMoon = state.body==='moon' && state.altitude<30000;
+      if (this.moon && this.moon.material && this.moon.material.color) this.moon.material.color.setScalar(lowMoon ? 0.6 : 1);   // la Luna iluminada de cerca saturaba a blanco
+      if (this.bloomPass) this.bloomPass.threshold = (low||lowMoon) ? 0.85 : 0.45; // sin esto el suelo/pad claros inundan la imagen
       if (this.atmosphere && low) this.atmosphere.visible=false;
       if (low){
         const sky=this._skyLow.clone().lerp(this._skySpace,f);
@@ -2677,7 +2686,7 @@ class RocketRenderer3D {
     }
     let camPos, lookAt, up;
 
-    if (missionPhase==='descent' || missionPhase==='loi_burn'){
+    if (missionPhase==='descent' || missionPhase==='loi_burn' || missionPhase==='separation'){
       // ---- Descenso / aproximacion lunar: la Luna llena la parte de abajo del encuadre ----
       up = toMoon.clone();
       const distance=40, altura=25;
@@ -2973,7 +2982,7 @@ class MissionAutopilot {
       ret_wait:'En la Luna', ret_ascent:'Despegue lunar', ret_rdv:'Encuentro', ret_orbit:'Órbita lunar', ret_tei:'Inyección a la Tierra', ret_coast_moon:'Saliendo de la Luna', ret_coast_earth:'Regreso a la Tierra', ret_entry:'Entrada', ret_chute:'Paracaídas', ret_done:'Completado',
       art_a_ascent:'Ascenso SLS', art_a_coast:'Coast a apogeo', art_a_icps1:'ICPS: quema 1', art_a_coast2:'Coast a perigeo', art_a_icps2:'ICPS: quema 2', art_init:'Preparando', art_align:'Alineando', art_tli:'Inyección translunar', art_coast1:'Crucero translunar', art_predict:'Calculando corrección', art_coast2:'Sobrevuelo y retorno', art_entry:'Entrada', art_chute:'Paracaídas', art_done:'Completado',
       ascent:'Ascenso', park_coast:'Coast al apogeo', park_circ:'Circularizando', coast_leo:'Órbita terrestre', tli_burn:'Quema translunar', transposicion:'Transposición',
-      coast_tli:'Crucero a la Luna', loi_burn:'Aproximación lunar', descent:'Descenso', done:'Completado'
+      coast_tli:'Crucero a la Luna', loi_burn:'Aproximación lunar', separation:'Separación Eagle', descent:'Descenso', done:'Completado'
     };
     return NAMES[this.phase] || this.phase;
   }
@@ -3214,7 +3223,8 @@ class MissionAutopilot {
     if (this.phase==='ret_wait'){
       if (!R.swapped){
         // Se deja la etapa de descenso en la superficie: despega SOLO la etapa de ascenso del modulo lunar (4.547 kg con la tripulacion)
-        p.stack=new StageStack(cfg.lmStack); R.swapped=true; R.t0=p.time;
+        if (this.app.mission.lmDescent){ if (p.stack.currentIndex===0) p.stack.jettison(); R.swapped=true; R.t0=p.time; }
+        else { p.stack=new StageStack(cfg.lmStack); R.swapped=true; R.t0=p.time; }
         // plano de la orbita: contiene el sitio de alunizaje y la direccion a la Tierra (asi la TEI puede salir hacia la Tierra)
         let n=cr3(up,moonEarthDir()); if (Math.hypot(n.x,n.y,n.z)<1e-3) n=cr3(up,nrm({x:0,y:0,z:1})); R.n=nrm(n);
         this._artTelemetry('despegue: etapa de ascenso',{masaKg:+(p.dryMass+p.fuelMass).toFixed(0),propKg:+p.fuelMass.toFixed(0)});
@@ -3866,7 +3876,7 @@ class MissionAutopilot {
 
     if (this.phase==='coast_tli'){
       this.explain('coast_tli');
-      controls.throttle=0; controls.timeScale=20000;
+      controls.throttle=0; controls.timeScale=(this.app.mission&&this.app.mission.cruiseTimeScale)||20000;   // Apolo 11: ~3000 (~3 min reales)
       const shipAbsNow=preState.shipAbs, moonAbsNow=preState.bodies.moon;
       const distMoonNow=Math.sqrt((shipAbsNow.x-moonAbsNow.x)**2+(shipAbsNow.y-moonAbsNow.y)**2+(shipAbsNow.z-moonAbsNow.z)**2);
       if (p.time-this.lastCorrection>3600*6){
@@ -3897,7 +3907,7 @@ class MissionAutopilot {
       const tangSpeed=Math.sqrt(tangVec.x**2+tangVec.y**2+tangVec.z**2);
       if (this._loiSub===undefined) this._loiSub='fall';
       let dir=null, throttle=0;
-      controls.timeScale = this._loiSub==='fall' ? 300 : 1;
+      controls.timeScale = this._loiSub==='fall' ? ((this.app.mission&&this.app.mission.loiFallTimeScale)||300) : 1;
 
       if (this._loiSub==='fall'){
         if (!this._targetedOnce){
@@ -3928,20 +3938,84 @@ class MissionAutopilot {
 
       const speedAfter=Math.sqrt(p.u*p.u+p.v*p.v+p.w*p.w);
       if (this._loiSub==='insert' && speedAfter<=vCirc*1.02){
-        this.phase='descent'; this.phaseStart=p.time; this._descSub='align'; this._fixedDeorbitDir=null; this._numBurns=1;
-        this.explain('descent');
+        if (this.app.mission && this.app.mission.transposition){
+          // Fase 7: Columbia se queda en la orbita en la que se separa (circular a esta altura, mismo plano y sentido que la nave)
+          const ci=DOCKING_TARGETS.findIndex(t=>t.id==='csm'); if (ci>=0) DOCKING_TARGETS.splice(ci,1);
+          const r0=Math.hypot(p.x,p.y,p.z), e1={x:p.x/r0,y:p.y/r0,z:p.z/r0}, vr=p.u*e1.x+p.v*e1.y+p.w*e1.z;
+          let e2={x:p.u-vr*e1.x,y:p.v-vr*e1.y,z:p.w-vr*e1.z}; const m2=Math.hypot(e2.x,e2.y,e2.z)||1; e2={x:e2.x/m2,y:e2.y/m2,z:e2.z/m2};
+          const n0=Math.sqrt(G*SOLAR_BODIES.moon.mass/(r0*r0*r0));
+          DOCKING_TARGETS.push({id:'csm', name:'Columbia (CSM)', parent:'moon', altitude:r0-SOLAR_BODIES.moon.radius, phase0:-n0*p.time, e1, e2});
+          this.app.toast.show('🛰️ Separación: Columbia queda en órbita lunar; Eagle inicia el descenso.', 7000);
+        }
+        const LDm=this.app.mission && this.app.mission.lmDescent;
+        if (LDm){
+          // Opcion (b): el LOI lo hizo la pila grande (SPS del CSM); ahora Eagle se separa y queda solo la pila del LM (descenso + ascenso)
+          p.stack=new StageStack(LDm.stack);
+          this.phase='separation'; this.phaseStart=p.time; this._sepDir=null;
+          this.explain('separation');
+          this.app.toast.show('🛰️ Eagle se separa de Columbia (pila del módulo lunar: descenso + ascenso).', 6000);
+        } else {
+          this.phase='descent'; this.phaseStart=p.time; this._descSub='align'; this._fixedDeorbitDir=null; this._numBurns=1;
+          this.explain('descent');
+        }
       }
       if (preState.fuelPercent<=0){ this.stop('⚠️ Sin combustible durante la inserción orbital lunar.'); return null; }
       return controls;
     }
 
+    if (this.phase==='separation'){
+      // Fase 7: Eagle se aleja de Columbia sin empuje (RCS), actitud retrograda para el encendido de descenso
+      const LDm=this.app.mission.lmDescent;
+      if (!this._sepDir) this._sepDir=norm3({x:-p.u,y:-p.v,z:-p.w});
+      const st=p.autopilotSteer(this._sepDir);
+      controls.pitch=st.pitch; controls.yaw=st.yaw; controls.roll=st.roll; controls.throttle=0; controls.timeScale=1;
+      if (p.time-this.phaseStart>=(LDm.sepS||30)){
+        this.phase='descent'; this.phaseStart=p.time; this._descSub='doi_align'; this._fixedDeorbitDir=null; this._doiDir=null; this._numBurns=1;
+        this.explain('descent');
+      }
+      return controls;
+    }
     if (this.phase==='descent'){
       this.explain('descent');
+      const LDd=this.app.mission && this.app.mission.lmDescent;
+      if (LDd && p.stack.currentIndex>0 && !this._landedLM){ this.stop('⚠️ Se agotó el propergol de la etapa de descenso antes de alunizar.'); return null; }
       const horizSpeed=preState.horizSpeed, vertSpeed=preState.vertSpeed, alt=preState.altitude;
       if (this._descSub===undefined) this._descSub='align';
       let dir=null, throttle=0;
 
-      if (this._descSub==='align'){
+      const GMd=G*SOLAR_BODIES.moon.mass, rMoonD=SOLAR_BODIES.moon.radius;
+      if (LDd && this._descSub==='doi_align'){
+        // DOI (insercion en orbita de descenso): impulso retrogrado que baja el perilunio a ~15 km, como el LM real
+        if (!this._fixedDeorbitDir) this._fixedDeorbitDir=norm3({x:-p.u,y:-p.v,z:-p.w});
+        dir=this._fixedDeorbitDir; throttle=0.002;
+        const ta=RocketPhysics.targetAngles(FRAME_ROTATION_INV(dir));
+        if ((Math.abs(RocketPhysics.wrapAngle(ta.pitch-p.pitch))+Math.abs(RocketPhysics.wrapAngle(ta.yaw-p.yaw)))<0.1) this._descSub='doi_burn';
+      } else if (LDd && this._descSub==='doi_burn'){
+        // Se frena la velocidad TANGENCIAL hasta la que da un perilunio de periKm (conservacion de energia y momento angular)
+        const rr=Math.hypot(p.x,p.y,p.z), ru=norm3({x:p.x,y:p.y,z:p.z}), rp=rMoonD+(LDd.periKm||15)*1000;
+        const vr=p.u*ru.x+p.v*ru.y+p.w*ru.z, tv={x:p.u-vr*ru.x,y:p.v-vr*ru.y,z:p.w-vr*ru.z}, vt=Math.hypot(tv.x,tv.y,tv.z);
+        if (!this._doiDir) this._doiDir=norm3({x:-tv.x,y:-tv.y,z:-tv.z});
+        dir=this._doiDir;
+        const vtNeed=Math.sqrt(Math.max(0,2*(GMd*(1/rr-1/rp)-vr*vr/2)/(1-(rr*rr)/(rp*rp))));
+        if (vt<=vtNeed){ throttle=0; this._descSub='doi_coast'; this.app.toast.show('🌙 DOI completada: perilunio de ~15 km. Se coasta hasta el perilunio.', 5000); }
+        else throttle=Math.max(0.05,Math.min(1,(vt-vtNeed)/3));
+      } else if (LDd && this._descSub==='doi_coast'){
+        dir=this._fixedDeorbitDir; throttle=0;
+        controls.timeScale=Math.max(1,Math.min(100,(alt-(LDd.periKm||15)*1000-3000)/400));
+        if (vertSpeed>-1 && alt<(LDd.periKm||15)*1000+4000){ this._descSub='brake'; this.app.toast.show('🔥 Encendido de frenado: descenso motorizado.', 5000); }
+      } else if (LDd && this._descSub==='brake'){
+        // Guiado de frenado: empuje maximo; el cabeceo reparte el empuje entre frenar la velocidad horizontal
+        // y sostener el perfil de descenso vertical (como la fase de frenado del LM real).
+        const up={x:p.x,y:p.y,z:p.z}, ru=norm3(up), vv=p.u*ru.x+p.v*ru.y+p.w*ru.z;
+        const hv={x:p.u-vv*ru.x,y:p.v-vv*ru.y,z:p.w-vv*ru.z}, hs=Math.hypot(hv.x,hv.y,hv.z), hd=hs>0.5?norm3(hv):norm3(cross3fix(ru));
+        const rr=Math.hypot(p.x,p.y,p.z), gl=GMd/(rr*rr), cent=hs*hs/rr;
+        const A=p.maxThrust/(p.dryMass+p.fuelMass);
+        const vT=-Math.min(LDd.brakeRateCap||30,Math.sqrt(Math.max(0,alt))*0.6);
+        const av=Math.max(0,Math.min(A*0.95,gl-cent+(vT-vertSpeed)*(LDd.brakeGain||0.5)));
+        const ah=Math.sqrt(Math.max(0,A*A-av*av));
+        dir=norm3({x:-hd.x*ah+ru.x*av,y:-hd.y*ah+ru.y*av,z:-hd.z*ah+ru.z*av}); throttle=1;
+        if (hs<(LDd.brakeEndHs||30)) this._descSub='final';
+      } else if (this._descSub==='align'){
         if (!this._fixedDeorbitDir) this._fixedDeorbitDir=norm3({x:-p.u,y:-p.v,z:-p.w});
         dir=this._fixedDeorbitDir;
         const localDirCheck=FRAME_ROTATION_INV(dir);
@@ -3967,8 +4041,9 @@ class MissionAutopilot {
         const rNowFinal=SOLAR_BODIES.moon.radius+alt;
         const gLocal=(G*SOLAR_BODIES.moon.mass)/(rNowFinal*rNowFinal);
         const massNowFinal=p.dryMass+p.fuelMass;
-        const targetDescentRate=-Math.max(1,Math.min(150,Math.sqrt(Math.max(0,alt))*0.6));
-        const desiredAccel=(targetDescentRate-vertSpeed)*0.3;
+        const GKd=LDd?(LDd.rateCap||150):150, GKc=LDd?(LDd.rateK||0.6):0.6, GKg=LDd?(LDd.gain||0.3):0.3;
+        const targetDescentRate=-Math.max(1,Math.min(GKd,Math.sqrt(Math.max(0,alt))*GKc));
+        const desiredAccel=(targetDescentRate-vertSpeed)*GKg;
         const neededThrustAccel=Math.max(0,desiredAccel+gLocal);
         throttle=Math.max(0,Math.min(1,neededThrustAccel*massNowFinal/p.maxThrust));
         // Freno horizontal suave y continuo (ayuda simplificada, igual que las correcciones de

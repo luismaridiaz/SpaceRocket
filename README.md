@@ -36,6 +36,14 @@ Las pruebas de Node van aparte (`rocket-tests.zip`): descomprimirlas como carpet
 ## Apolo 11: transposicion y descarte del LM (guionizados)
 Tras la TLI nueva fase `transposicion` (24 s a x1): el CSM se separa de la S-IVB, gira 180 grados, se acopla al LM y lo extrae; la S-IVB cae al terminar. Durante el regreso, la etapa de ascenso del LM aparece acoplada en `ret_orbit` y se descarta antes de la TEI. Solo visual (opt-in: `transposition` en la config). No verificado en navegador.
 
+## Apolo 11: separacion Columbia/Eagle (fase 7, solo visual), crucero y alunizaje
+- Crucero translunar a x3000 (`cruiseTimeScale`): ~4 min reales con la velocidad de mision en x1 (x8 lo divide por 8). La caida final a la Luna va a x150.
+- Fase 7 visual: al empezar `descent` Columbia (modulo de mando y servicio) se queda en orbita lunar como objetivo pasivo y baja solo el LM (el modulo de mando desaparece del conjunto).
+  La fisica sigue siendo un unico vehiculo con la misma masa y combustible: no hay recalibracion.
+- Alunizaje: las patas del LM quedaban ~5,4 m sobre el suelo (el origen del modelo esta en la base de la S-IC); ahora el conjunto baja en los ultimos 50 m de altitud y las patas tocan el suelo.
+- Durante el despegue lunar el modelo es la etapa de ascenso; en `ret_orbit` va acoplada al modulo de mando y se descarta al empezar la TEI.
+- La Luna a menos de 30 km de altitud se oscurece (brillo x0,6) y sube el umbral del bloom: se veia blanca.
+
 ## Apolo 11: Columbia (CSM) como objetivo pasivo en orbita lunar
 Al despegar el LM aparece el CSM en orbita circular de 111 km (8 grados por delante del sitio; unos 600 km por delante del LM al insertarse). El acople simplificado coloca la nave exactamente en su posicion y velocidad. Sigue sin haber encuentro real (fase 11) ni CSM como vehiculo separado en el descenso (fase 7 completa). El angulo de 8 grados (`returnTrip.csmPhaseDeg`) NO es una condicion calibrada: solo decide donde se ve Columbia y en que punto de la orbita queda la nave tras el acople simplificado (la TEI espera su angulo igualmente). Medido: con 0-270 grados la primera correccion del regreso varia 3-8 m/s. Render del CSM sin verificar en navegador.
 
@@ -45,3 +53,11 @@ opuesto a donde estara la Luna al cruzar su distancia en una elipse de 511.000 k
 El adelanto de -35 grados no es decorativo: con 0 grados la nave llegaba a la Luna casi en vertical (45 m/s en la SOI) y el LOI costaba el doble; con -35 llega con ~150 m/s,
 el LOI cuesta lo de siempre y quedan ~1,1-1,3 % de combustible al alunizar (igual que antes del aparcamiento; estable con pasos de 1/30 a 1/120 s).
 Probado en Node con 0,15 a 2,3 vueltas y arrancando la mision hasta 4,3 dias simulados despues de cargar. Limitacion: a partir de ~9 dias el crucero falla (igual que antes).
+
+## Apolo 11 (LM real) — `apolo11_lm.html`
+Misión nueva, aparte de `apolo11.html` (que no cambia). Se activa con `lmDescent` en `MISSION_CONFIG` (opt-in; sin él motor.js se comporta como antes).
+- El LOI lo hace la pila grande (SPS); al terminar, la pila pasa a las dos etapas reales del LM (descenso 2.134 + 8.200 kg; ascenso 2.171 + 2.376 kg, Isp 311).
+- Fases nuevas: `separation` (30 s, Eagle se separa de Columbia) → DOI (retrógrado, perilunio de 15 km por energía y momento angular) → coast hasta el perilunio → frenado guiado a empuje máximo (el cabeceo reparte empuje entre frenar y sostener el perfil vertical) → `final` (control por throttle de la versión antigua).
+- Al alunizar se descarta la etapa de descenso (`jettison`) y despega la de ascenso. Si la etapa de descenso se agota antes de alunizar, la misión aborta (guarda `currentIndex>0`).
+- Parámetros barridos en Node (`brakeRateCap` 20–80, `rateK`, `gain`, `brakeEndHs`): con 60 / 0,8 / 0,3 / 30 sobran ≈1.050 kg de propergol de descenso (≈13 %). `rateK` 0,4 falla (agota). El HUD muestra el combustible de la etapa actual, así que no salta.
+- No verificado en navegador (solo Node); la misión antigua sigue dando el mismo resultado (1,3 % de margen).

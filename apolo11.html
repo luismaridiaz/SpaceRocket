@@ -409,6 +409,7 @@ input[type="range"]::-webkit-slider-thumb:hover{transform:scale(1.15);box-shadow
     <p style="color:var(--text-secondary);font-style:italic;"><b>Simplificaciones del regreso, todas declaradas:</b><br>
     • <b>El módulo de mando no existe como entidad separada</b>: el encuentro real (maniobras CSI, CDH y TPI, unas 3,5 horas) <b>no se simula</b>; al insertarse en órbita, el simulador coloca la nave en la órbita circular del módulo de mando, en el mismo plano, y las une (como el salto de fasing de la ISS).<br>
     • <b>Órbita de aparcamiento</b> real (173×188 km, 1,75 vueltas, acelerada) y TLI en su ventana. Si la misión empieza más de ~4 días simulados después de cargar la página, la Luna queda fuera del plano de la órbita y el crucero falla (igual que antes de añadir el aparcamiento, que fallaba a partir de ~9 días).<br>
+    • <b>Separación Columbia/Eagle</b>: es visual. Al descender, el módulo de mando queda en órbita (se ve como objetivo) y baja solo el LM, pero la física sigue siendo un único vehículo; el encuentro del regreso no se simula.<br>
     • <b>Transposición y acoplamiento</b> (tras la TLI) y <b>descarte del LM</b> (antes de la TEI): son secuencias guionizadas solo visuales; la física sigue siendo un único vehículo.<br>
     • <b>Estancia de 21 h 30 min</b> en la superficie (la real fue de 21 h 36 min), acelerada hasta x3000: se ve en ~26 s reales.<br>
     • <b>TEI de 687 m/s</b>: el real fue de unos 1.000 m/s. La física de Apolo conserva la velocidad al cruzar la esfera de la Luna (igual que a la ida), por eso el Δv sale menor; no es el valor histórico.<br>
@@ -434,6 +435,8 @@ window.MISSION_CONFIG = {
     csmStack:[ { id:'sm', dryMass:4900, fuelMass:10900, maxFuelMass:10900, thrust:91000, isp:314 },
                { id:'capsula', dryMass:5560, fuelMass:0, maxFuelMass:0, thrust:0, isp:0 } ] },
   parking: { altKm:185, revs:1.75, warp:1000, tliApoKm:511000, tliLeadDeg:-35 },   // orbita de aparcamiento real de 1,75 vueltas + ventana de TLI hacia una elipse de ~511.000 km de apogeo
+  cruiseTimeScale: 3000,   // crucero translunar ~3 min reales (antes x20000 = ~25 s)
+  loiFallTimeScale: 150,
   transposition: { durS:24 },   // fase 4 guionizada: transposicion y acoplamiento CSM/LM (solo visual)
   dragCdA: 15.5,        // capsula Apolo: Cd ~1,3 x 12 m2
   dragFromStage: 1,     // solo cuando queda la capsula sola (la ida no cambia)

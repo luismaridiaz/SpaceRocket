@@ -1129,6 +1129,26 @@ function makeIceTexture(baseColor){
   }
   return new THREE.CanvasTexture(c);
 }
+// Regolito lunar teselable para el suelo local (polvo gris oscuro, crateres de todos los tamanos, guijarros).
+// Valores OSCUROS a proposito: r128 sin gestion de color + sol 1.8 saturan a blanco cualquier gris claro.
+function makeRegolithTexture(){
+  const N=512, c=document.createElement('canvas'); c.width=N; c.height=N; const ctx=c.getContext('2d');
+  let seed=12345; const rnd=()=>{ seed=(seed*1664525+1013904223)>>>0; return seed/4294967296; };
+  ctx.fillStyle='#4a4742'; ctx.fillRect(0,0,N,N);
+  const wrap=(fn)=>{ for (let dx=-N;dx<=N;dx+=N) for (let dy=-N;dy<=N;dy+=N) fn(dx,dy); };
+  for (let i=0;i<14000;i++){ const x=rnd()*N,y=rnd()*N,g=50+Math.floor(rnd()*45); ctx.fillStyle='rgb('+g+','+(g-2)+','+(g-5)+')'; wrap((dx,dy)=>ctx.fillRect(x+dx,y+dy,1+rnd()*2,1+rnd()*2)); }
+  for (let i=0;i<46;i++){
+    const x=rnd()*N,y=rnd()*N,r=6+Math.pow(rnd(),2.2)*70;
+    wrap((dx,dy)=>{
+      const X=x+dx,Y=y+dy; if (X<-r*1.4||X>N+r*1.4||Y<-r*1.4||Y>N+r*1.4) return;
+      const gr=ctx.createRadialGradient(X-r*0.18,Y-r*0.18,r*0.1,X,Y,r*1.1);
+      gr.addColorStop(0,'rgba(30,28,26,0.75)'); gr.addColorStop(0.72,'rgba(48,46,42,0.55)'); gr.addColorStop(0.88,'rgba(110,106,98,0.55)'); gr.addColorStop(1,'rgba(74,71,66,0)');
+      ctx.fillStyle=gr; ctx.beginPath(); ctx.arc(X,Y,r*1.1,0,Math.PI*2); ctx.fill();
+    });
+  }
+  for (let i=0;i<500;i++){ const x=rnd()*N,y=rnd()*N,r=0.8+rnd()*2.4,g=30+Math.floor(rnd()*70); ctx.fillStyle='rgba('+g+','+g+','+(g-3)+',0.9)'; wrap((dx,dy)=>{ ctx.beginPath(); ctx.arc(x+dx,y+dy,r,0,Math.PI*2); ctx.fill(); }); }
+  const tex=new THREE.CanvasTexture(c); tex.wrapS=tex.wrapT=THREE.RepeatWrapping; tex.anisotropy=8; return tex;
+}
 function makeMoonTexture(){
   const c=document.createElement('canvas'); c.width=1024; c.height=512;
   const ctx=c.getContext('2d');
@@ -1290,6 +1310,28 @@ class RocketRenderer3D {
       hill.position.set(Math.cos(a)*r,h/2,Math.sin(a)*r); this.localGround.add(hill);
     }
     this.localGround.visible=false; this.scene.add(this.localGround);
+    // Suelo lunar local: disco de 20 km que sigue la curvatura de la Luna, con regolito teselado (la textura global de 1k px
+    // no tiene detalle a baja altura: salia un gris liso). Visible solo cerca de la superficie lunar.
+    {
+      const R=SOLAR_BODIES.moon.radius, RAD=20000, NR=44, NA=72, T=240;
+      const pos=[], uv=[], idx=[];
+      pos.push(0,0.3,0); uv.push(0,0);
+      for (let i=1;i<=NR;i++){ const r=RAD*Math.pow(i/NR,2);
+        for (let j=0;j<NA;j++){ const a=j/NA*Math.PI*2, x=r*Math.cos(a), z=r*Math.sin(a);
+          pos.push(x, Math.sqrt(R*R-r*r)-R+0.3, z); uv.push(x/T, -z/T); } }
+      for (let j=0;j<NA;j++) idx.push(0,1+(j+1)%NA,1+j);
+      for (let i=1;i<NR;i++) for (let j=0;j<NA;j++){ const a=1+(i-1)*NA+j, b=1+(i-1)*NA+(j+1)%NA, c=1+i*NA+j, d=1+i*NA+(j+1)%NA; idx.push(a,b,c, b,d,c); }
+      const geo=new THREE.BufferGeometry();
+      geo.setAttribute('position',new THREE.Float32BufferAttribute(pos,3)); geo.setAttribute('uv',new THREE.Float32BufferAttribute(uv,2));
+      geo.setIndex(idx); geo.computeVertexNormals();
+      this.moonGroundTex=makeRegolithTexture();
+      const mat=new THREE.MeshStandardMaterial({map:this.moonGroundTex,roughness:1,metalness:0,transparent:true});
+      mat.onBeforeCompile=(sh)=>{
+        sh.vertexShader=sh.vertexShader.replace('void main() {','varying float vRad;\nvoid main() {').replace('#include <begin_vertex>','#include <begin_vertex>\n vRad=length(position.xz);');
+        sh.fragmentShader=sh.fragmentShader.replace('void main() {','varying float vRad;\nvoid main() {').replace('#include <dithering_fragment>','gl_FragColor.a*=1.0-smoothstep('+(RAD*0.55).toFixed(1)+','+RAD.toFixed(1)+',vRad);\n#include <dithering_fragment>');
+      };
+      this.moonGround=new THREE.Mesh(geo,mat); this.moonGround.visible=false; this.moonGround.frustumCulled=false; this.scene.add(this.moonGround);
+    }
     this._skyLow=new THREE.Color(0x3f78b8); this._skySpace=new THREE.Color(0x03030a);
     // Marcadores de Baikonur (despegue) y Smelovka (aterrizaje), solo en la mision Gagarin.
     // Se colocan en el MISMO marco fijo que usa la fisica de la nave (no giran con la textura
@@ -1637,6 +1679,20 @@ class RocketRenderer3D {
       const asc=new THREE.Mesh(new THREE.CylinderGeometry(0.55,0.7,0.8,8),legMat); asc.position.y=9.1; asc.castShadow=true; g.add(asc);
       const ascNoz=new THREE.Mesh(new THREE.ConeGeometry(0.2,0.3,8),engineMat); ascNoz.position.y=8.55; g.add(ascNoz);
       this.rocketGroup.add(g); this.lmAscGroup=g;
+    }
+    this.apolloChuteGroup=null;
+    if (useCM){
+      // Tres paracaidas principales (naranja y blanco) con sus cordones, sobre la nariz del modulo de mando (visibles en ret_chute / ret_done)
+      const cg=new THREE.Group(); cg.visible=false;
+      const cols=[0xe8570c,0xf2efe6,0xe8570c], lineMat=new THREE.LineBasicMaterial({color:0xd8d4c8});
+      for (let i=0;i<3;i++){
+        const a0=Math.PI/2+i*Math.PI*2/3, cx=Math.cos(a0)*3.4, cz=Math.sin(a0)*3.4, cy=8.6+11;
+        const can=new THREE.Mesh(new THREE.SphereGeometry(3.3,20,10,0,Math.PI*2,0,Math.PI*0.52),new THREE.MeshStandardMaterial({color:cols[i],roughness:0.8,side:THREE.DoubleSide}));
+        can.position.set(cx,cy,cz); can.rotation.z=-Math.cos(a0)*0.28; can.rotation.x=Math.sin(a0)*0.28; cg.add(can);
+        for (let k=0;k<6;k++){ const ka=k/6*Math.PI*2, rim=new THREE.Vector3(cx+Math.cos(ka)*3.2,cy-0.7,cz+Math.sin(ka)*3.2);
+          cg.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,8.5,0),rim]),lineMat)); }
+      }
+      this.rocketGroup.add(cg); this.apolloChuteGroup=cg;
     }
 
     // ---- Patas tipo modulo lunar: ocultas al principio (van dentro del SLA, entre la S-IVB
@@ -2259,6 +2315,8 @@ class RocketRenderer3D {
       this.lmLegsGroup.visible = u>0 && !ret;
       this.lmLegsGroup.position.y = 6.5+dyLand;
       this.lmLegsGroup.scale.setScalar(Math.max(0.01,Math.min(1,u/0.15)));
+      if (this.apolloChuteGroup) this.apolloChuteGroup.visible = (ph==='ret_chute' || ph==='ret_done');
+      if (this.apolloChuteGroup && this.towerGroup && (ph==='ret_chute'||ph==='ret_done')) this.towerGroup.visible=false;
       if (this.lmAscGroup){
         // etapa de ascenso: es la nave durante el despegue y el encuentro (ret_ascent, ret_rdv), luego va acoplada al modulo de mando (ret_orbit)
         const want = ph==='ret_ascent' || ph==='ret_rdv' || ph==='ret_orbit';
@@ -2305,6 +2363,27 @@ class RocketRenderer3D {
     this.frontRenderer.setSize(fw,fh); this.frontCam.aspect=fw/fh; this.frontCam.updateProjectionMatrix();
     this.backRenderer.setSize(bw,bh); this.backCam.aspect=bw/bh; this.backCam.updateProjectionMatrix();
   }
+  // Base real del cohete (y local mas bajo de la geometria visible): la llama sale de AHI, no de una y fija.
+  // Sin esto, al soltar etapas (o con el LM solo) la llama quedaba a metros de la tobera.
+  _flameBaseY(){
+    const rg=this.rocketGroup; if (!rg) return -0.8;
+    rg.updateMatrixWorld(true);
+    if (!this._fbInv){ this._fbInv=new THREE.Matrix4(); this._fbM=new THREE.Matrix4(); this._fbBox=new THREE.Box3(); }
+    this._fbInv.copy(rg.matrixWorld).invert();
+    const skip=new Set([this.towerGroup,this.parachuteGroup,this.apolloChuteGroup,this.engineGlow].concat((this._flamePool||[]),(this._fallingStages||[]).map(f=>f.group)));
+    let minY=Infinity; const self=this;
+    (function rec(o){
+      if (!o.visible || skip.has(o)) return;
+      if (o.isMesh && o.geometry){
+        if (o.material && o.material.blending===THREE.AdditiveBlending) return;
+        if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
+        self._fbBox.copy(o.geometry.boundingBox); self._fbM.multiplyMatrices(self._fbInv,o.matrixWorld); self._fbBox.applyMatrix4(self._fbM);
+        if (self._fbBox.min.y<minY) minY=self._fbBox.min.y;
+      }
+      for (const c of o.children) rec(c);
+    })(rg);
+    return isFinite(minY) ? minY-0.1 : -0.8;
+  }
   updateFlame(throttle){
     const MAX_FLAMES=24;
     if (!this._flamePool){
@@ -2323,6 +2402,7 @@ class RocketRenderer3D {
       return;
     }
     const count=Math.floor(3+throttle*8);
+    const fb=this._flameBaseY()+0.0;   // base de la geometria visible
     let idx=0;
     for (let i=0;i<count && idx<MAX_FLAMES;i++){
       const len=1+throttle*6+Math.random()*2, width=0.2+throttle*0.8+Math.random()*0.3, angle=(Math.random()-0.5)*0.3;
@@ -2331,14 +2411,14 @@ class RocketRenderer3D {
 
       const flame=this._flamePool[idx++];
       flame.visible=true; flame.scale.set(width,len,width);
-      flame.position.set(Math.sin(angle)*0.3,-0.8-len/2,Math.cos(angle)*0.3);
+      flame.position.set(Math.sin(angle)*0.3,fb+0.0-len/2+0.0,Math.cos(angle)*0.3);
       flame.rotation.x=angle*0.5; flame.rotation.z=angle*0.3;
       flame.material.color.copy(color); flame.material.opacity=opacity;
 
       if (Math.random()>0.5 && idx<MAX_FLAMES){
         const sub=this._flamePool[idx++];
         sub.visible=true; sub.scale.set(width*0.5,len*0.6,width*0.5);
-        sub.position.set(Math.sin(angle+0.2)*0.5,-0.8-len*0.4,Math.cos(angle+0.2)*0.5);
+        sub.position.set(Math.sin(angle+0.2)*0.5,fb-len*0.4,Math.cos(angle+0.2)*0.5);
         sub.rotation.x=0; sub.rotation.z=0;
         sub.material.color.copy(color); sub.material.opacity=opacity;
       }
@@ -2423,7 +2503,8 @@ class RocketRenderer3D {
     }
     if (this.earth) this.earth.rotation.y = (state.time/EARTH_SIDEREAL_DAY)*Math.PI*2;
     if (this.clouds) this.clouds.rotation.y = (state.time/(EARTH_SIDEREAL_DAY*0.9))*Math.PI*2;
-    if (this.moon) this.moon.rotation.y += frameDt*(Math.PI*2/300);
+    const _moonLocked = !!(typeof window!=='undefined' && window.MISSION_CONFIG && window.MISSION_CONFIG.returnTrip);
+    if (this.moon && !_moonLocked) this.moon.rotation.y += frameDt*(Math.PI*2/300);
     if (this.bodyMeshes.jupiter) this.bodyMeshes.jupiter.rotation.y = (state.time/35730)*Math.PI*2; // 9h 55m 30s real
     if (this.bodyMeshes.saturn) this.bodyMeshes.saturn.rotation.y = (state.time/38018)*Math.PI*2; // 10h 33m 38s real
     if (this.atmosphere) this.atmosphere.visible = (state.body==='earth');
@@ -2445,11 +2526,28 @@ class RocketRenderer3D {
       const low = state.body==='earth' && state.altitude<30000;
       const f = low ? Math.min(1,Math.max(0,(state.altitude-8000)/22000)) : 1; // 0 = suelo/cielo diurno, 1 = espacio
       this._lowAlt = low;
+      const ocean = low && typeof missionPhase==='string' && missionPhase.startsWith('ret_');   // regreso de Apolo: se amariza, no hay desierto
       if (this.localGround){
         this.localGround.visible = low;
         if (low){
           this.localGround.position.set(0,-state.altitude-1.0,0); // 1.0 bajo el origen del cohete: los motores llegan a y=-0.8
-          this.localGroundMat.color.set(0x403a28).lerp(this._skySpace,f);
+          this.localGroundMat.color.set(ocean?0x123a63:0x403a28).lerp(this._skySpace,f);
+          this.localGround.children.forEach((c,i)=>{ if (i>0) c.visible=!ocean; });
+        }
+      }
+      // Suelo lunar con detalle (se ancla a lon/lat para que la textura se desplace al moverse la nave)
+      if (this.moonGround){
+        const mLow = state.body==='moon' && state.altitude<30000 && this.moon;
+        this.moonGround.visible = !!mLow;
+        if (mLow){
+          const mp=this.moon.position, dm=mp.length()||1, u=new THREE.Vector3(-mp.x/dm,-mp.y/dm,-mp.z/dm), R=SOLAR_BODIES.moon.radius;
+          let east=new THREE.Vector3(u.z,0,-u.x); if (east.lengthSq()<1e-8) east.set(1,0,0); east.normalize();
+          const zl=new THREE.Vector3().crossVectors(east,u);
+          this.moonGround.position.set(-u.x*state.altitude,-u.y*state.altitude,-u.z*state.altitude);   // |mp|=R+alt: asi se evita el error de float32 de los 1,7e6 m
+          this.moonGround.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(east,u,zl));
+          const lon=Math.atan2(-u.z,u.x), lat=Math.asin(Math.max(-1,Math.min(1,u.y))), T=240;
+          const ae=lon*R*Math.cos(lat), an=lat*R, fr=v=>v-Math.floor(v);
+          this.moonGroundTex.offset.set(fr(ae/T),fr(an/T));
         }
       }
       if (this.earth) this.earth.visible = !low;
@@ -2491,6 +2589,12 @@ class RocketRenderer3D {
       this.engineLight.intensity=state.throttle*5;
       this.engineLight.position.set(Math.sin(state.pitch)*2,-3,0);
     }
+    // Salpicadura del amerizaje: anillo que se expande y se desvanece sobre el mar
+    if (missionPhase==='ret_done'){
+      if (!this.splashRing){ this.splashRing=new THREE.Mesh(new THREE.RingGeometry(1,1.5,48),new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:0.8,side:THREE.DoubleSide,depthWrite:false})); this.splashRing.rotation.x=-Math.PI/2; this.scene.add(this.splashRing); this._splashT=0; }
+      this._splashT+=Math.min(0.1,frameDt||0.016); const t=this._splashT;
+      this.splashRing.visible=t<5; this.splashRing.position.set(0,-state.altitude-0.9,0); this.splashRing.scale.setScalar(1+t*9); this.splashRing.material.opacity=Math.max(0,0.8-t*0.17);
+    } else if (this.splashRing){ this.splashRing.visible=false; this._splashT=0; }
     this.updateFlame(state.throttle);
     this.updateParticles(state);
     this.updateTrail(state, shipAbs);
@@ -2977,6 +3081,12 @@ class MissionAutopilot {
     };
     if (MSG[key]) this.app.toast.show(MSG[key], 7000);
   }
+  // Tiempo acelerado segun la distancia al cuerpo (opt-in: mission.approachTau, segundos REALES de constante de tiempo):
+  // la Luna/Tierra crecen a ritmo suave en vez de aparecer de golpe. null si no esta activado.
+  _approachTs(dist, speed, cap){
+    const M=this.app.mission, tau=M&&M.approachTau; if (!tau) return null;
+    return Math.max(M.approachMinTs||30, Math.min(cap, Math.max(0,dist)/Math.max(speed,50)/tau));
+  }
   statusLabel(){
     const NAMES = {
       ret_wait:'En la Luna', ret_ascent:'Despegue lunar', ret_rdv:'Encuentro', ret_orbit:'Órbita lunar', ret_tei:'Inyección a la Tierra', ret_coast_moon:'Saliendo de la Luna', ret_coast_earth:'Regreso a la Tierra', ret_entry:'Entrada', ret_chute:'Paracaídas', ret_done:'Completado',
@@ -3315,6 +3425,7 @@ class MissionAutopilot {
     if (this.phase==='ret_coast_moon'){
       controls.throttle=0;
       const alt=preState.altitude; controls.timeScale = alt<300e3 ? 60 : (alt<5e6 ? 600 : 3000);
+      { const ats=this._approachTs(alt, speedNow, cfg.cruiseTs||3000); if (ats!=null) controls.timeScale=Math.min(controls.timeScale,ats); }
       if (preState.body==='earth'){ this.phase='ret_coast_earth'; this.phaseStart=p.time; R.lastCorr=-1e18; R.corrN=0; this.explain('ret_coast_earth'); controls.timeScale=1; return controls; }
       if (p.time-this.phaseStart>20*86400) return this._artFail('la nave no sale de la esfera de la Luna.');
       return controls;
@@ -3344,6 +3455,7 @@ class MissionAutopilot {
         }
       }
       controls.timeScale=artemisCruiseTimeScale('earth',dist);
+      { const ats=this._approachTs(preState.altitude, speedNow, cfg.cruiseTs||3000); if (ats!=null) controls.timeScale=Math.min(controls.timeScale,ats); }
       if (preState.altitude<ARTEMIS_EI_ALT){ this.phase='ret_entry'; this.phaseStart=p.time; R.maxG=0; R.vPrev=null; R.esmOff=false; this.explain('ret_entry'); controls.timeScale=1; return controls; }
       if (p.time-this.phaseStart>20*86400) return this._artFail('el regreso tardó más de 20 días.');
       return controls;
@@ -3362,8 +3474,11 @@ class MissionAutopilot {
       return controls;
     }
     if (this.phase==='ret_chute'){
-      controls.throttle=0; controls.timeScale=30;
-      const k=Math.pow(0.15, controls.timeScale/60); p.u*=k; p.v*=k; p.w*=k;
+      controls.throttle=0; controls.timeScale=(this.app.mission&&this.app.mission.chuteTimeScale)||12;
+      { // Frenada de los paracaidas: la velocidad tiende a una de descenso que baja con la altitud (drogue ~100 m/s a 7,6 km, principales ~9 m/s al amerizar)
+        const vt=8.5+Math.max(0,preState.altitude)*0.012, sp=Math.hypot(p.u,p.v,p.w);
+        if (sp>vt){ const k=Math.pow(0.15, controls.timeScale/60), sn=vt+(sp-vt)*k; p.u*=sn/sp; p.v*=sn/sp; p.w*=sn/sp; }
+        steerTo(up); }
       if (preState.altitude<=0){
         p.u=0;p.v=0;p.w=0; this._artTelemetry('amerizaje',{velMs:0});
         this.phase='ret_done'; this.active=false; this._zeroControls(); this.explain('ret_done');
@@ -3879,6 +3994,8 @@ class MissionAutopilot {
       controls.throttle=0; controls.timeScale=(this.app.mission&&this.app.mission.cruiseTimeScale)||20000;   // Apolo 11: ~3000 (~3 min reales)
       const shipAbsNow=preState.shipAbs, moonAbsNow=preState.bodies.moon;
       const distMoonNow=Math.sqrt((shipAbsNow.x-moonAbsNow.x)**2+(shipAbsNow.y-moonAbsNow.y)**2+(shipAbsNow.z-moonAbsNow.z)**2);
+      { const eA=preState.bodies.earth, dE=Math.hypot(shipAbsNow.x-eA.x,shipAbsNow.y-eA.y,shipAbsNow.z-eA.z)-SOLAR_BODIES.earth.radius, dM=distMoonNow-SOLAR_BODIES.moon.radius;
+        if (dM<dE){ const ats=this._approachTs(dM, speedNow, controls.timeScale); if (ats!=null) controls.timeScale=ats; } }   // solo al acercarse a la Luna: la salida de la Tierra no se toca (trayectoria calibrada con ese paso)
       if (p.time-this.lastCorrection>3600*6){
         this.lastCorrection=p.time;
         const timeToArrival = speedNow>10 ? distMoonNow/speedNow : 1e9;
@@ -3908,6 +4025,7 @@ class MissionAutopilot {
       if (this._loiSub===undefined) this._loiSub='fall';
       let dir=null, throttle=0;
       controls.timeScale = this._loiSub==='fall' ? ((this.app.mission&&this.app.mission.loiFallTimeScale)||300) : 1;
+      if (this._loiSub==='fall'){ const ats=this._approachTs(preState.altitude, speedNow, (this.app.mission&&this.app.mission.cruiseTimeScale)||3000); if (ats!=null) controls.timeScale=ats; }
 
       if (this._loiSub==='fall'){
         if (!this._targetedOnce){
@@ -4095,7 +4213,8 @@ class RocketSimApp {
   // ultima fase para que la visibilidad de etapas siga la etapa fisica real.
   _keepPhaseAfterEnd(){
     const t=this.mission && this.mission.type;
-    return (t==='shuttle'||t==='iss'||t==='artemis') && !!(this.missionAuto && this.missionAuto.phase);
+    const apolloRet = !!(this.mission && this.mission.returnTrip) && !!(this.missionAuto && String(this.missionAuto.phase||'').startsWith('ret_'));
+    return apolloRet || ((t==='shuttle'||t==='iss'||t==='artemis') && !!(this.missionAuto && this.missionAuto.phase));
   }
   constructor(){    this.physics=new RocketPhysics();
     this.sound=new SoundSystem();

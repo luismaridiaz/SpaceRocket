@@ -61,3 +61,10 @@ Misión nueva, aparte de `apolo11.html` (que no cambia). Se activa con `lmDescen
 - Al alunizar se descarta la etapa de descenso (`jettison`) y despega la de ascenso. Si la etapa de descenso se agota antes de alunizar, la misión aborta (guarda `currentIndex>0`).
 - Parámetros barridos en Node (`brakeRateCap` 20–80, `rateK`, `gain`, `brakeEndHs`): con 60 / 0,8 / 0,3 / 30 sobran ≈1.050 kg de propergol de descenso (≈13 %). `rateK` 0,4 falla (agota). El HUD muestra el combustible de la etapa actual, así que no salta.
 - No verificado en navegador (solo Node); la misión antigua sigue dando el mismo resultado (1,3 % de margen).
+
+## Ajustes visuales y de ritmo (Apolo 11, ambas páginas)
+- **Aproximación suave** (`approachTau:25`, `approachMinTs:30`): al acercarse a la Luna (crucero y caída del LOI) y al salir de ella / volver a la Tierra, el tiempo acelerado depende de la distancia (constante de tiempo ≈25 s reales), así que el cuerpo crece poco a poco en vez de aparecer de golpe. La salida de la Tierra no se toca: la TLI está calibrada con ese paso (probado: con ts adaptativo desde el principio se pierde la Luna). En el regreso solo se baja el ts respecto al anterior (`min`).
+- **Llama pegada a la tobera**: la base de la llama se calcula cada fotograma con la geometría visible más baja (`_flameBaseY`), así que sigue a la etapa activa (S-II, S-IVB, LM…).
+- **Suelo lunar con detalle**: disco de 20 km que sigue la curvatura de la Luna con textura de regolito oscura y teselada, anclada a lon/lat (la textura se desplaza al moverse). La Luna deja de girar en misiones con regreso. Solo bajo 30 km de altitud.
+- **Regreso**: en `ret_chute` se despliegan 3 paracaídas, la velocidad tiende a una de descenso que baja con la altitud (≈100 m/s a 7,6 km → ≈9 m/s al amerizar), reloj x12 (`chuteTimeScale`); el suelo bajo ese tramo es mar (no desierto) y al amerizar un anillo de espuma. La última fase se conserva tras terminar el piloto (antes el cohete completo reaparecía).
+- No verificado en navegador (solo Node): flama, suelo lunar, paracaídas y mar son visuales.

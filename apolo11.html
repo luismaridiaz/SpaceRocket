@@ -408,7 +408,9 @@ input[type="range"]::-webkit-slider-thumb:hover{transform:scale(1.15);box-shadow
     <p><b>Si alunizas a mano</b>: al quedar posado aparece el botón <b>🚀 Regreso automático</b>, que lanza solo el regreso. El resto de la misión (ida y alunizaje) sigue igual que antes.</p>
     <p style="color:var(--text-secondary);font-style:italic;"><b>Simplificaciones del regreso, todas declaradas:</b><br>
     • <b>El módulo de mando no existe como entidad separada</b>: el encuentro real (maniobras CSI, CDH y TPI, unas 3,5 horas) <b>no se simula</b>; al insertarse en órbita, el simulador coloca la nave en la órbita circular del módulo de mando, en el mismo plano, y las une (como el salto de fasing de la ISS).<br>
-    • <b>Estancia de 20 s</b> en la superficie (la real fue de 21 h 36 min).<br>
+    • <b>Órbita de aparcamiento</b> real (173×188 km, 1,75 vueltas, acelerada) y TLI en su ventana. Si la misión empieza más de ~4 días simulados después de cargar la página, la Luna queda fuera del plano de la órbita y el crucero falla (igual que antes de añadir el aparcamiento, que fallaba a partir de ~9 días).<br>
+    • <b>Transposición y acoplamiento</b> (tras la TLI) y <b>descarte del LM</b> (antes de la TEI): son secuencias guionizadas solo visuales; la física sigue siendo un único vehículo.<br>
+    • <b>Estancia de 21 h 30 min</b> en la superficie (la real fue de 21 h 36 min), acelerada hasta x3000: se ve en ~26 s reales.<br>
     • <b>TEI de 687 m/s</b>: el real fue de unos 1.000 m/s. La física de Apolo conserva la velocidad al cruzar la esfera de la Luna (igual que a la ida), por eso el Δv sale menor; no es el valor histórico.<br>
     • <b>Entrada balística</b>, sin sustentación: el pico de deceleración sale ~23 g, mucho más que los ~6 g reales; no es un fallo de la simulación.<br>
     • <b>Paracaídas</b> como frenado exponencial y <b>corrección</b> de unos 7 m/s como pulso instantáneo, pagada con propelente real.<br>
@@ -426,11 +428,13 @@ window.MISSION_CONFIG = {
   // teiHalfArcDeg = -12: valor CALIBRADO (barrido en Node): la TEI se enciende ~23 grados despues del punto opuesto a la Tierra (el arco de la quema y la
   // deflexion de la hiperbola desplazan la salida); con él la primera correccion en la esfera de la Tierra baja de ~90 a ~7 m/s.
   // CSM tras la orbita lunar: modulo de servicio seco 4.900 kg + propelente SPS (motor de 91 kN, Isp 314 s) + capsula de mando 5.560 kg.
-  returnTrip: { waitS:20, exitSpeed:450, targetPerigeeKm:45, maxDv:300, orbitAltKm:111, insertPeriKm:15, teiHalfArcDeg:-12, maxBurnS:600,
+  returnTrip: { waitS:77400, exitSpeed:450, targetPerigeeKm:45, maxDv:300, orbitAltKm:111, insertPeriKm:15, teiHalfArcDeg:-12, maxBurnS:600,
     ascent:{ tVertical:8, k:4, n:0.7 },
     lmStack:[ { id:'lm-ascenso', dryMass:2171, fuelMass:2376, maxFuelMass:2376, thrust:15600, isp:311 } ],
     csmStack:[ { id:'sm', dryMass:4900, fuelMass:10900, maxFuelMass:10900, thrust:91000, isp:314 },
                { id:'capsula', dryMass:5560, fuelMass:0, maxFuelMass:0, thrust:0, isp:0 } ] },
+  parking: { altKm:185, revs:1.75, warp:1000, tliApoKm:511000, tliLeadDeg:-35 },   // orbita de aparcamiento real de 1,75 vueltas + ventana de TLI hacia una elipse de ~511.000 km de apogeo
+  transposition: { durS:24 },   // fase 4 guionizada: transposicion y acoplamiento CSM/LM (solo visual)
   dragCdA: 15.5,        // capsula Apolo: Cd ~1,3 x 12 m2
   dragFromStage: 1,     // solo cuando queda la capsula sola (la ida no cambia)
   maxThrust: 82659060, // validado de extremo a extremo: despegue+TLI+orbita lunar+descenso completos, con margen real de sobra (no solo teorico)

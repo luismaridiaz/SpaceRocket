@@ -220,6 +220,14 @@ function dockingTargetState(target, t){
   const period = 2*Math.PI*Math.sqrt(Math.pow(r,3)/(6.67430e-11*parent.mass));
   const angVel = 2*Math.PI/period;
   const angle = target.phase0 + angVel*t;
+  if (target.e1 && target.e2){   // orbita circular en un plano dado por dos ejes ortonormales (p.ej. el CSM lunar de Apolo)
+    const c=Math.cos(angle), s=Math.sin(angle), e1=target.e1, e2=target.e2;
+    return {
+      pos:{x:r*(c*e1.x+s*e2.x), y:r*(c*e1.y+s*e2.y), z:r*(c*e1.z+s*e2.z)},
+      vel:{x:r*angVel*(-s*e1.x+c*e2.x), y:r*angVel*(-s*e1.y+c*e2.y), z:r*angVel*(-s*e1.z+c*e2.z)},
+      r, period
+    };
+  }
   return {
     pos:{x:r*Math.cos(angle), y:0, z:r*Math.sin(angle)},
     vel:{x:-r*angVel*Math.sin(angle), y:0, z:r*angVel*Math.cos(angle)},
@@ -560,7 +568,7 @@ class RocketPhysics {
     // componente fijo de una etapa hibrida SRB+SSME), "congelarse en tierra" aqui la dejaria
     // sin empuje aunque este fisicamente encendida.
     const stageBurningRegardless = this.fuelMass>0 && this.stack.effectiveThrustAt(0, this.time).thrust>0;
-    if (this._lastState.bodyName==='earth' && this._lastState.altitude<=0.01 && this.throttle<0.05 && !this.dockedTo && !stageBurningRegardless){
+    if (this._lastState.altitude<=0.01 && this.throttle<0.05 && !this.dockedTo && !stageBurningRegardless){
       this.u=0; this.v=0; this.w=0; this._wasFrozen=true;
       this.pitchRate*=Math.pow(0.15,dt); this.yawRate*=Math.pow(0.15,dt); this.rollRate*=Math.pow(0.15,dt);
       this.pitch+=this.pitchRate*dt; this.yaw+=this.yawRate*dt; this.roll+=this.rollRate*dt;
@@ -1377,6 +1385,16 @@ class RocketRenderer3D {
       this.scene.add(this.dockingTargetGroup);
     }
 
+    // Apolo 11: el modulo de mando y servicio (Columbia) en orbita lunar como objetivo pasivo (ver DOCKING_TARGETS 'csm')
+    if (typeof window!=='undefined' && window.MISSION_CONFIG && window.MISSION_CONFIG.transposition){
+      const g=new THREE.Group(); g.visible=false;
+      const mW=new THREE.MeshStandardMaterial({color:0xd8d4c0,roughness:0.35,metalness:0.3}), mG=new THREE.MeshStandardMaterial({color:0x9a9aa2,roughness:0.3,metalness:0.7});
+      const sm=new THREE.Mesh(new THREE.CylinderGeometry(1.9,1.9,5.0,20),mG); sm.rotation.z=Math.PI/2; g.add(sm);
+      const cm=new THREE.Mesh(new THREE.ConeGeometry(1.9,3.2,20),mW); cm.rotation.z=-Math.PI/2; cm.position.x=4.1; g.add(cm);
+      const noz=new THREE.Mesh(new THREE.ConeGeometry(1.0,1.8,16),new THREE.MeshStandardMaterial({color:0x2a2a30,metalness:0.9,roughness:0.2})); noz.rotation.z=Math.PI/2; noz.position.x=-3.4; g.add(noz);
+      this.csmTargetGroup=g; this.scene.add(g);
+    }
+
     // Cinturon de Kuiper: anillo de particulas decorativo entre ~35 y ~48 UA
     const kCount=3000;
     const kGeo=new THREE.BufferGeometry();
@@ -1583,26 +1601,42 @@ class RocketRenderer3D {
     stripeIVB.position.y=6.35; this.sIVBGroup.add(stripeIVB);
     this.rocketGroup.add(this.sIVBGroup);
 
+    // Apolo 11 con transposicion (config.transposition): el modulo de mando y la torre van en grupos propios con
+    // pivote en y=7.15 para poder girarlos 180 grados y acoplarlos al LM (fase 4 de la mision). Resto: igual que siempre.
+    const useCM = !!(typeof window!=='undefined' && window.MISSION_CONFIG && window.MISSION_CONFIG.transposition);
+    const CM_PIVOT = 7.15;
+    this.csmGroup = null; this.towerGroup = null; this.lmAscGroup = null;
+    const cmHost = useCM ? (()=>{ const g=new THREE.Group(); g.position.y=CM_PIVOT; this.rocketGroup.add(g); this.csmGroup=g; return g; })() : this.rocketGroup;
+    const cmDy = useCM ? -CM_PIVOT : 0;
+
     // ---- Modulo de mando: capsula troncoconica roma ----
     const capsule=new THREE.Mesh(new THREE.CylinderGeometry(0.5,0.85,1.3,24),capsuleMat);
-    capsule.position.y=7.15; capsule.castShadow=true; this.rocketGroup.add(capsule);
+    capsule.position.y=7.15+cmDy; capsule.castShadow=true; cmHost.add(capsule);
     const capsuleTop=new THREE.Mesh(new THREE.ConeGeometry(0.5,0.75,24),capsuleMat);
-    capsuleTop.position.y=8.18; capsuleTop.castShadow=true; this.rocketGroup.add(capsuleTop);
+    capsuleTop.position.y=8.18+cmDy; capsuleTop.castShadow=true; cmHost.add(capsuleTop);
 
     // ---- Torre de escape ----
     const towerMat=new THREE.MeshStandardMaterial({color:0x888888,roughness:0.4,metalness:0.7});
+    const towerHost = useCM ? (()=>{ const g=new THREE.Group(); cmHost.add(g); this.towerGroup=g; return g; })() : cmHost;
     const tower=new THREE.Mesh(new THREE.CylinderGeometry(0.045,0.07,1.2,8),towerMat);
-    tower.position.y=9.15; this.rocketGroup.add(tower);
+    tower.position.y=9.15+cmDy; towerHost.add(tower);
     const towerTip=new THREE.Mesh(new THREE.ConeGeometry(0.07,0.35,8),towerMat);
-    towerTip.position.y=9.9; this.rocketGroup.add(towerTip);
+    towerTip.position.y=9.9+cmDy; towerHost.add(towerTip);
 
     // ---- Ventanas pequeñas y redondas del modulo de mando ----
     for (let i=0;i<2;i++){
       const windowMesh=new THREE.Mesh(new THREE.CircleGeometry(0.14,16),windowMat);
       const angle=(i/2)*Math.PI*2+0.4;
-      windowMesh.position.set(0.7*Math.cos(angle),6.95,0.7*Math.sin(angle));
-      windowMesh.lookAt(windowMesh.position.x*2,6.95,windowMesh.position.z*2);
-      this.rocketGroup.add(windowMesh);
+      windowMesh.position.set(0.7*Math.cos(angle),6.95+cmDy,0.7*Math.sin(angle));
+      windowMesh.lookAt(windowMesh.position.x*2,6.95,windowMesh.position.z*2);   // lookAt usa coordenadas de MUNDO: y=6.95, no el local
+      cmHost.add(windowMesh);
+    }
+    if (useCM){
+      // Etapa de ascenso del LM, acoplada a la nariz del modulo de mando durante el regreso (fase 12: se descarta antes de la TEI)
+      const g=new THREE.Group(); g.visible=false;
+      const asc=new THREE.Mesh(new THREE.CylinderGeometry(0.55,0.7,0.8,8),legMat); asc.position.y=9.1; asc.castShadow=true; g.add(asc);
+      const ascNoz=new THREE.Mesh(new THREE.ConeGeometry(0.2,0.3,8),engineMat); ascNoz.position.y=8.55; g.add(ascNoz);
+      this.rocketGroup.add(g); this.lmAscGroup=g;
     }
 
     // ---- Patas tipo modulo lunar: ocultas al principio (van dentro del SLA, entre la S-IVB
@@ -2111,7 +2145,7 @@ class RocketRenderer3D {
   // nuestra simulacion no tarda lo mismo que la mision real (el TLI dispara mucho antes que
   // las 2h44m reales), asi que usar los tiempos historicos (162s/522s/702s) haria que una
   // etapa "cayera" en mitad del crucero translunar. Puramente decorativo -- no toca la fisica.
-  updateStageVisibility(missionPhase, stageIndex){
+  updateStageVisibility(missionPhase, stageIndex, simTime){
     if (!missionPhase){ // sandbox sin piloto automatico: cohete completo, como siempre
       this.sICGroup.visible=true; this.sIIGroup.visible=true; this.sIVBGroup.visible=true; this.lmLegsGroup.visible=false;
       this.sICGroup.position.set(0,0,0); this.sICGroup.rotation.set(0,0,0);
@@ -2178,6 +2212,18 @@ class RocketRenderer3D {
       wantSIC = isAscent && stageIndex<=0;
       wantSII = isAscent && stageIndex<=1;
     }
+    // Guion de transposicion y acoplamiento (Apolo 11): la S-IVB se mantiene hasta que el CSM extrae el LM.
+    const scriptOn = !!this.csmGroup;
+    let tpU = 0;
+    if (scriptOn){
+      const ph=String(missionPhase||''), ret=ph.startsWith('ret_');
+      const dur=(cfgNow.transposition&&cfgNow.transposition.durS)||24;
+      if (ph==='transposicion'){ if (this._tpT0==null) this._tpT0=simTime; tpU=Math.max(0,Math.min(1,(simTime-this._tpT0)/dur)); }
+      else if (['coast_tli','loi_burn','descent','done'].includes(ph) || ret) tpU=1;
+      else this._tpT0=null;
+      this._tpU=tpU;
+      wantSIVB = ['ascent','park_coast','park_circ','coast_leo','tli_burn'].includes(ph) || (ph==='transposicion' && tpU<0.75);
+    }
     if (this.sICGroup.visible && !wantSIC && !alreadyFalling(this.sICGroup)) this._fallingStages.push({group:this.sICGroup, age:0});
     if (this.sIIGroup.visible && !wantSII && !alreadyFalling(this.sIIGroup)) this._fallingStages.push({group:this.sIIGroup, age:0});
     if (this.sIVBGroup.visible && !wantSIVB && !alreadyFalling(this.sIVBGroup)) this._fallingStages.push({group:this.sIVBGroup, age:0});
@@ -2189,6 +2235,30 @@ class RocketRenderer3D {
     // capsula (su posicion original asumia todo el cuerpo del cohete encima). Se reubican
     // justo bajo la capsula para que no queden como dos trozos sueltos con un hueco enorme.
     this.lmLegsGroup.position.y = arrivedAtMoon ? 6.5 : 0;
+    if (scriptOn){
+      const ph=String(missionPhase||''), ret=ph.startsWith('ret_'), u=tpU;
+      const ease=t=>t*t*(3-2*t);
+      // Cronologia: 0-.25 el CSM se separa de la S-IVB; .25-.5 gira 180 grados; .5-.75 vuelve y se acopla al LM; .75-1 extraccion
+      let pivot=7.15, rot=0;
+      if (u>0){
+        if (u<0.25) pivot=7.15+3.35*ease(u/0.25);
+        else if (u<0.5){ pivot=10.5; rot=Math.PI*ease((u-0.25)/0.25); }
+        else if (u<0.75){ pivot=10.5-2.15*ease((u-0.5)/0.25); rot=Math.PI; }
+        else { pivot=8.35; rot=Math.PI; }
+      }
+      if (ret){ pivot=7.15; rot=0; }
+      this.csmGroup.position.y=pivot; this.csmGroup.rotation.x=rot;
+      if (this.towerGroup) this.towerGroup.visible = !(u>0);
+      // LM: aparece al separarse el CSM y viaja acoplado hasta la Luna; durante el regreso el que queda es el de ascenso
+      this.lmLegsGroup.visible = u>0 && !ret;
+      this.lmLegsGroup.position.y = 6.5;
+      this.lmLegsGroup.scale.setScalar(Math.max(0.01,Math.min(1,u/0.15)));
+      if (this.lmAscGroup){
+        const want = ph==='ret_orbit';
+        if (this.lmAscGroup.visible && !want && !alreadyFalling(this.lmAscGroup)) this._fallingStages.push({group:this.lmAscGroup, age:0});
+        if (want) this.lmAscGroup.visible=true;
+      }
+    }
   }
   // Anima las etapas descartadas: se quedan atras (se alejan del morro de la nave) y giran
   // lentamente, durante 3s, antes de desaparecer del todo. Puramente decorativo.
@@ -2271,7 +2341,7 @@ class RocketRenderer3D {
   update(state, frameDt, missionPhase){
     const isGagarin = typeof window!=='undefined' && window.MISSION_CONFIG && window.MISSION_CONFIG.type==='gagarin';
     if (isGagarin) this.updateVostokVisibility(missionPhase);
-    else { this.updateStageVisibility(missionPhase, state.stageIndex); this.updateFallingStages(Math.min(0.1,frameDt||0.016)); }
+    else { this.updateStageVisibility(missionPhase, state.stageIndex, state.time); this.updateFallingStages(Math.min(0.1,frameDt||0.016)); }
     const shipAbs = new THREE.Vector3(state.shipAbs.x, state.shipAbs.y, state.shipAbs.z);
     // origen flotante: cada cuerpo se coloca en su posicion real MENOS la posicion real de la nave,
     // asi la nave siempre esta cerca de (0,0,0) sin importar si estamos junto a la Tierra o cerca de Pluton.
@@ -2335,6 +2405,15 @@ class RocketRenderer3D {
       );
     }
 
+    if (this.csmTargetGroup){
+      const ct=DOCKING_TARGETS.find(t=>t.id==='csm');
+      this.csmTargetGroup.visible=!!ct;
+      if (ct){
+        const ts=dockingTargetState(ct, state.time), pa=state.bodies[ct.parent];
+        this.csmTargetGroup.position.set(pa.x+ts.pos.x-shipAbs.x, pa.y+ts.pos.y-shipAbs.y, pa.z+ts.pos.z-shipAbs.z);
+        const v=norm3(ts.vel); this.csmTargetGroup.quaternion.setFromUnitVectors(new THREE.Vector3(1,0,0), new THREE.Vector3(v.x,v.y,v.z));
+      }
+    }
     if (this.earth) this.earth.rotation.y = (state.time/EARTH_SIDEREAL_DAY)*Math.PI*2;
     if (this.clouds) this.clouds.rotation.y = (state.time/(EARTH_SIDEREAL_DAY*0.9))*Math.PI*2;
     if (this.moon) this.moon.rotation.y += frameDt*(Math.PI*2/300);
@@ -2856,7 +2935,10 @@ class MissionAutopilot {
     const isShuttle = this.app.mission && this.app.mission.type==='shuttle';
     const MSG = {
       ascent: '🚀 Piloto automático: despegando con giro gravitatorio real hacia el este.',
-      coast_leo: '🛰️ En órbita terrestre. Preparando la inyección translunar.',
+      park_coast: '🛰️ Corte de motor: la nave sube en arco hasta el apogeo de la órbita de aparcamiento.',
+      park_circ: '🔥 En el apogeo: quema prógrada para circularizar la órbita de aparcamiento.',
+      coast_leo: '🛰️ En órbita de aparcamiento terrestre. Comprobación de sistemas antes de la inyección translunar.',
+      transposicion: '🔄 Transposición y acoplamiento: el CSM se separa de la S-IVB, gira 180°, se acopla al módulo lunar y lo extrae.',
       tli_burn: '🔥 Quemando prógrado para alcanzar la velocidad exacta hacia la Luna (ecuación vis-viva).',
       coast_tli: '🌌 Crucero hacia la Luna, con correcciones de rumbo automáticas cada 6h simuladas.',
       loi_burn: '🌑 Aproximación lunar: cayendo con seguridad hacia una órbita baja real.',
@@ -2890,7 +2972,7 @@ class MissionAutopilot {
     const NAMES = {
       ret_wait:'En la Luna', ret_ascent:'Despegue lunar', ret_rdv:'Encuentro', ret_orbit:'Órbita lunar', ret_tei:'Inyección a la Tierra', ret_coast_moon:'Saliendo de la Luna', ret_coast_earth:'Regreso a la Tierra', ret_entry:'Entrada', ret_chute:'Paracaídas', ret_done:'Completado',
       art_a_ascent:'Ascenso SLS', art_a_coast:'Coast a apogeo', art_a_icps1:'ICPS: quema 1', art_a_coast2:'Coast a perigeo', art_a_icps2:'ICPS: quema 2', art_init:'Preparando', art_align:'Alineando', art_tli:'Inyección translunar', art_coast1:'Crucero translunar', art_predict:'Calculando corrección', art_coast2:'Sobrevuelo y retorno', art_entry:'Entrada', art_chute:'Paracaídas', art_done:'Completado',
-      ascent:'Ascenso', coast_leo:'Órbita terrestre', tli_burn:'Quema translunar',
+      ascent:'Ascenso', park_coast:'Coast al apogeo', park_circ:'Circularizando', coast_leo:'Órbita terrestre', tli_burn:'Quema translunar', transposicion:'Transposición',
       coast_tli:'Crucero a la Luna', loi_burn:'Aproximación lunar', descent:'Descenso', done:'Completado'
     };
     return NAMES[this.phase] || this.phase;
@@ -3138,8 +3220,19 @@ class MissionAutopilot {
         this._artTelemetry('despegue: etapa de ascenso',{masaKg:+(p.dryMass+p.fuelMass).toFixed(0),propKg:+p.fuelMass.toFixed(0)});
         this.app.toast.show('🚀 Se prepara el despegue: la etapa de ascenso del módulo lunar (el descenso se queda en el Mar de la Tranquilidad).', 7000);
       }
-      steerTo(up); controls.throttle=0; controls.timeScale=1;
-      if (p.time-R.t0>=cfg.waitS){ this.phase='ret_ascent'; this.phaseStart=p.time; R.fuel0=p.fuelMass; R.m0=p.dryMass+p.fuelMass; this.explain('ret_ascent'); }
+      steerTo(up); controls.throttle=0;
+      // Estancia larga (Apolo 11 real: 21 h 36 min en la Luna): reloj acelerado y, en los ultimos 120 s, a x1.
+      // El congelado en superficie (sin integrar fuerzas) evita que la nave rebote con el paso grande.
+      const tLeft=cfg.waitS-(p.time-R.t0);
+      controls.timeScale = (cfg.waitS>3600 && tLeft>300) ? Math.min(3000, tLeft/4) : 1;
+      if (p.time-R.t0>=cfg.waitS){
+        // La Luna se desplaza ~12 grados en su orbita durante 21,5 h: el plano de salida (sitio + direccion a la Tierra) se recalcula al despegar.
+        { let n2=cr3(up,moonEarthDir()); if (Math.hypot(n2.x,n2.y,n2.z)>=1e-3) R.n=nrm(n2); }
+        // El CSM (Columbia) espera en orbita circular de orbitAltKm en el plano de la salida, 8 grados por delante del sitio de despegue (~15 grados por delante del LM al insertarse en orbita).
+        { const i=DOCKING_TARGETS.findIndex(t=>t.id==='csm'); if (i>=0) DOCKING_TARGETS.splice(i,1);
+          const rC=RM+cfg.orbitAltKm*1000, nC=Math.sqrt(MU_M/(rC*rC*rC)), tH0=nrm(cr3(R.n,up));
+          DOCKING_TARGETS.push({id:'csm', name:'Columbia (CSM)', parent:'moon', altitude:cfg.orbitAltKm*1000, phase0:(cfg.csmPhaseDeg!==undefined?cfg.csmPhaseDeg:8)*Math.PI/180-nC*p.time, e1:{x:up.x,y:up.y,z:up.z}, e2:tH0}); }
+        this.phase='ret_ascent'; this.phaseStart=p.time; R.fuel0=p.fuelMass; R.m0=p.dryMass+p.fuelMass; this.explain('ret_ascent'); }
       return controls;
     }
 
@@ -3165,6 +3258,9 @@ class MissionAutopilot {
       const rNew=RM+cfg.orbitAltKm*1000, vC=Math.sqrt(MU_M/rNew), vrad=(p.x*p.u+p.y*p.v+p.z*p.w)/rr;
       let t={x:p.u-vrad*up.x,y:p.v-vrad*up.y,z:p.w-vrad*up.z}; if (Math.hypot(t.x,t.y,t.z)<1) t=cr3(R.n,up); t=nrm(t);
       p.x=up.x*rNew; p.y=up.y*rNew; p.z=up.z*rNew; p.u=t.x*vC; p.v=t.y*vC; p.w=t.z*vC;
+      { // el acople simplificado coloca la nave exactamente donde esta el CSM (posicion y velocidad), y el CSM deja de ser un objetivo aparte
+        const ci=DOCKING_TARGETS.findIndex(t2=>t2.id==='csm');
+        if (ci>=0){ const ts=dockingTargetState(DOCKING_TARGETS[ci], p.time); p.x=ts.pos.x; p.y=ts.pos.y; p.z=ts.pos.z; p.u=ts.vel.x; p.v=ts.vel.y; p.w=ts.vel.z; DOCKING_TARGETS.splice(ci,1); } }
       p.stack=new StageStack(cfg.csmStack);                                           // se descarta el modulo lunar; quedan SM + capsula
       this._artTelemetry('acoplamiento con el CSM y descarte del modulo lunar',{orbitaKm:cfg.orbitAltKm,velMs:+vC.toFixed(0),masaKg:+(p.dryMass+p.fuelMass).toFixed(0)});
       this.app.toast.show('🛰️ Encuentro y acoplamiento con el módulo de mando (simplificado). Se descarta el módulo lunar.', 7000);
@@ -3311,8 +3407,20 @@ class MissionAutopilot {
       const steer=p.autopilotSteer(dir);
       controls.pitch=steer.pitch; controls.yaw=steer.yaw; controls.roll=steer.roll; controls.throttle=1; controls.timeScale=1;
       const rMag=Math.hypot(p.x,p.y,p.z), vCirc=Math.sqrt(G*SOLAR_BODIES.earth.mass/rMag);
-      if (speedNow>=vCirc*1.02 && preState.altitude>80000){
-        this.phase='iss_coast_apo'; this.phaseStart=p.time; this.explain('iss_coast_apo');
+      // Corte dirigido a la ISS: se apaga el motor cuando el APOGEO alcanza ~408 km (antes se
+      // seguia hasta velocidad orbital y el apogeo acababa en 1300-2900 km; despues el fasing
+      // teletransportaba la nave a 408 km, un salto visible). Luego coast al apogeo + circularizacion.
+      {
+        const muA=G*SOLAR_BODIES.earth.mass;
+        const hx=p.y*p.w-p.z*p.v, hy=p.z*p.u-p.x*p.w, hz=p.x*p.v-p.y*p.u;
+        const ex=(p.v*hz-p.w*hy)/muA-p.x/rMag, ey=(p.w*hx-p.u*hz)/muA-p.y/rMag, ez=(p.u*hy-p.v*hx)/muA-p.z/rMag;
+        const eA=Math.sqrt(ex*ex+ey*ey+ez*ez), aA=1/(2/rMag-speedNow*speedNow/muA);
+        const apoAlt=(isFinite(aA)&&aA>0) ? aA*(1+eA)-SOLAR_BODIES.earth.radius : 1e12;
+        if (preState.altitude>80000 && (apoAlt>=408000 || speedNow>=vCirc*1.02)){
+          this.phase='iss_coast_apo'; this.phaseStart=p.time; this.explain('iss_coast_apo'); controls.throttle=0;
+          this.app.toast.show('🚀 Corte de motor — apogeo '+(Math.min(apoAlt,9e9)/1000).toFixed(0)+' km. Coast hasta el apogeo.', 5000);
+          return controls;
+        }
       }
       if (preState.fuelPercent<=0){ this.stop('⚠️ Sin combustible antes de alcanzar la órbita.'); return null; }
       return controls;
@@ -3321,9 +3429,20 @@ class MissionAutopilot {
     if (this.phase==='iss_coast_apo'){
       this.explain('iss_coast_apo');
       controls.throttle=0; controls.timeScale=20;
+      if (speedNow>0.5){ const st=p.autopilotSteer(norm3({x:p.u,y:p.v,z:p.w})); controls.pitch=st.pitch; controls.yaw=st.yaw; controls.roll=st.roll; } // llegar al apogeo ya apuntando en prograde
       const rHat=norm3({x:p.x,y:p.y,z:p.z});
       const vRad=p.u*rHat.x+p.v*rHat.y+p.w*rHat.z;
-      if (vRad<=0){ this.phase='iss_circularize'; this.phaseStart=p.time; this.explain('iss_circularize'); }
+      // Se empieza la quema ANTES del apogeo, centrandola en el: vRad <= aRad*tQuema/2 con
+      // tQuema = dV/aceleracion. Asi la orbita final sale casi circular a ~408 km en cualquier cohete.
+      let vRadStart = 0;
+      {
+        const rM=Math.hypot(p.x,p.y,p.z), sp=Math.sqrt(p.u*p.u+p.v*p.v+p.w*p.w), mu=G*SOLAR_BODIES.earth.mass;
+        const thr=p.stack.effectiveThrustAt(1,p.time).thrust, mass=p.dryMass+p.fuelMass;
+        const dV=Math.max(0,Math.sqrt(mu/rM)-sp), acc=thr>0 ? thr/mass : 0;
+        const aRad=Math.max(0,mu/(rM*rM)-sp*sp/rM);
+        if (acc>0) vRadStart=aRad*(dV/acc)/2;
+      }
+      if (vRad<=vRadStart){ this._circBurning=false; this.phase='iss_circularize'; this.phaseStart=p.time; this.explain('iss_circularize'); }
       return controls;
     }
 
@@ -3333,7 +3452,11 @@ class MissionAutopilot {
       const steer=p.autopilotSteer(dir);
       controls.pitch=steer.pitch; controls.yaw=steer.yaw; controls.roll=steer.roll; controls.timeScale=1;
       const rMag=Math.hypot(p.x,p.y,p.z), vCirc=Math.sqrt(G*SOLAR_BODIES.earth.mass/rMag);
-      controls.throttle = speedNow<vCirc ? 1 : 0;
+      // Solo se enciende con la nave ya apuntando en prograde (si no, el empuje sale en otra direccion
+      // y la orbita queda excentrica: antes 351x729 km con la Soyuz).
+      const aligned = Math.abs(steer.pitch)<0.15 && Math.abs(steer.yaw)<0.15 && Math.abs(p.pitchRate)<0.05 && Math.abs(p.yawRate)<0.05;
+      controls.throttle = (speedNow<vCirc && (aligned || this._circBurning)) ? 1 : 0;
+      if (controls.throttle>0) this._circBurning=true;
       const mu=G*SOLAR_BODIES.earth.mass;
       const hx=p.y*p.w-p.z*p.v, hy=p.z*p.u-p.x*p.w, hz=p.x*p.v-p.y*p.u;
       const vxh_x=p.v*hz-p.w*hy, vxh_y=p.w*hx-p.u*hz, vxh_z=p.u*hy-p.v*hx;
@@ -3350,7 +3473,7 @@ class MissionAutopilot {
       // Bug real corregido: sin este umbral mas bajo, el Shuttle llegaba sin combustible y
       // nunca alcanzaba 346.8km, terminando en "Sin combustible durante la circularizacion".
       const isShuttleCirc = this.app.mission && this.app.mission.type === 'shuttle';
-      const perigeeThreshold = isShuttleCirc ? 70000 : 346800; // 85% de 408km para el resto
+      const perigeeThreshold = isShuttleCirc ? 395000 : 346800; // 85% de 408km para el resto
       // Bug real corregido (afecta a cualquier mision, no solo al Shuttle): antes, al
       // transicionar a iss_orbit aqui, el codigo seguia evaluando las comprobaciones de
       // fallo de ABAJO en el MISMO fotograma -- con la Soyuz nunca se notaba porque su
@@ -3582,6 +3705,21 @@ class MissionAutopilot {
         // plataforma antes de pulsar el piloto automatico lo dejaba sin combustible en la
         // circularizacion -- bug real reproducido en el arnes). Se corta el OMS en cuanto el
         // perigeo supera 100 km; el propelente sobrante queda para el acople automatico.
+        // MECO dirigido a la ISS: el SSME se corta cuando el APOGEO alcanza ~408 km (no cuando
+        // la velocidad es orbital, que dejaba apogeos de 2000-2900 km). Se descarta el
+        // tanque/etapa, se hace coast hasta el apogeo y el OMS circulariza alli (~100 m/s).
+        if (p.stack.currentIndex===1){
+          const muM=G*SOLAR_BODIES.earth.mass, rM=Math.hypot(p.x,p.y,p.z);
+          const hx=p.y*p.w-p.z*p.v, hy=p.z*p.u-p.x*p.w, hz=p.x*p.v-p.y*p.u;
+          const ex=(p.v*hz-p.w*hy)/muM-p.x/rM, ey=(p.w*hx-p.u*hz)/muM-p.y/rM, ez=(p.u*hy-p.v*hx)/muM-p.z/rM;
+          const eM=Math.sqrt(ex*ex+ey*ey+ez*ez), aM=1/(2/rM-(p.u*p.u+p.v*p.v+p.w*p.w)/muM);
+          const apoAlt=(isFinite(aM)&&aM>0) ? aM*(1+eM)-SOLAR_BODIES.earth.radius : 1e12;
+          const apoTarget=((this.app.mission&&this.app.mission.shuttleApoKm)||408)*1000;
+          if (apoAlt>=apoTarget && preState.altitude>90000){
+            p.stack.jettison(); this.app.toast.show('🚀 MECO — apogeo '+(apoAlt/1000).toFixed(0)+' km. Coast hasta el apogeo.', 5000);
+            this.phase='iss_coast_apo'; this.phaseStart=p.time; this.explain('iss_coast_apo'); controls.throttle=0; return controls;
+          }
+        }
         if (p.stack.currentIndex===2){
           const muE=G*SOLAR_BODIES.earth.mass, rM=Math.hypot(p.x,p.y,p.z);
           const hx=p.y*p.w-p.z*p.v, hy=p.z*p.u-p.x*p.w, hz=p.x*p.v-p.y*p.u;
@@ -3595,9 +3733,61 @@ class MissionAutopilot {
           else { this.stop('⚠️ Sin combustible antes de alcanzar órbita.'); return null; }
         }
       } else {
+        const PK=this.app.mission && this.app.mission.parking;
+        if (PK){
+          // Orbita de aparcamiento real (opt-in): corte cuando el apogeo llega a PK.altKm, coast al apogeo y circularizacion.
+          const muA=G*SOLAR_BODIES.earth.mass, rA=Math.hypot(p.x,p.y,p.z);
+          const hx=p.y*p.w-p.z*p.v, hy=p.z*p.u-p.x*p.w, hz=p.x*p.v-p.y*p.u;
+          const ex=(p.v*hz-p.w*hy)/muA-p.x/rA, ey=(p.w*hx-p.u*hz)/muA-p.y/rA, ez=(p.u*hy-p.v*hx)/muA-p.z/rA;
+          const eA=Math.sqrt(ex*ex+ey*ey+ez*ez), aA=1/(2/rA-speedNow*speedNow/muA);
+          const apoAlt=(isFinite(aA)&&aA>0) ? aA*(1+eA)-SOLAR_BODIES.earth.radius : 1e12;
+          if (preState.altitude>80000 && apoAlt>=PK.altKm*1000){
+            this.phase='park_coast'; this.phaseStart=p.time; this.explain('park_coast'); controls.throttle=0;
+            this.app.toast.show('🚀 Corte de motor — apogeo '+(apoAlt/1000).toFixed(0)+' km. Coast hasta el apogeo.', 5000);
+            return controls;
+          }
+        } else
         if (preState.inOrbit){ this.phase='coast_leo'; this.phaseStart=p.time; this.explain('coast_leo'); }
         if (preState.fuelPercent<=0 && !preState.inOrbit){ this.stop('⚠️ Sin combustible antes de alcanzar órbita.'); return null; }
       }
+      return controls;
+    }
+
+    if (this.phase==='park_coast'){
+      this.explain('park_coast');
+      controls.throttle=0; controls.timeScale=20;
+      if (speedNow>0.5){ const st=p.autopilotSteer(norm3({x:p.u,y:p.v,z:p.w})); controls.pitch=st.pitch; controls.yaw=st.yaw; controls.roll=st.roll; }
+      const rHat=norm3({x:p.x,y:p.y,z:p.z}), vRad=p.u*rHat.x+p.v*rHat.y+p.w*rHat.z;
+      // la quema se centra en el apogeo (misma regla que las misiones ISS)
+      let vRadStart=0;
+      { const rM=Math.hypot(p.x,p.y,p.z), mu=G*SOLAR_BODIES.earth.mass, thr=p.stack.effectiveThrustAt(1,p.time).thrust, mass=p.dryMass+p.fuelMass;
+        const dV=Math.max(0,Math.sqrt(mu/rM)-speedNow), acc=thr>0?thr/mass:0, aRad=Math.max(0,mu/(rM*rM)-speedNow*speedNow/rM);
+        if (acc>0) vRadStart=aRad*(dV/acc)/2; }
+      if (vRad<=vRadStart){ this._circBurning=false; this.phase='park_circ'; this.phaseStart=p.time; this.explain('park_circ'); }
+      if (p.fuelMass<=0) { this.stop('⚠️ Sin combustible antes de la órbita de aparcamiento.'); return null; }
+      return controls;
+    }
+
+    if (this.phase==='park_circ'){
+      this.explain('park_circ');
+      const st=p.autopilotSteer(speedNow>0.5 ? norm3({x:p.u,y:p.v,z:p.w}) : FRAME_ROTATION({x:0,y:1,z:0}));
+      controls.pitch=st.pitch; controls.yaw=st.yaw; controls.roll=st.roll; controls.timeScale=1;
+      const rMag=Math.hypot(p.x,p.y,p.z), mu=G*SOLAR_BODIES.earth.mass, vCirc=Math.sqrt(mu/rMag);
+      const aligned=Math.abs(st.pitch)<0.15 && Math.abs(st.yaw)<0.15 && Math.abs(p.pitchRate)<0.05 && Math.abs(p.yawRate)<0.05;
+      controls.throttle=(speedNow<vCirc && (aligned||this._circBurning)) ? 1 : 0;
+      if (controls.throttle>0) this._circBurning=true;
+      const hx=p.y*p.w-p.z*p.v, hy=p.z*p.u-p.x*p.w, hz=p.x*p.v-p.y*p.u;
+      const ex=(p.v*hz-p.w*hy)/mu-p.x/rMag, ey=(p.w*hx-p.u*hz)/mu-p.y/rMag, ez=(p.u*hy-p.v*hx)/mu-p.z/rMag;
+      const eMag=Math.sqrt(ex*ex+ey*ey+ez*ez), a=1/(2/rMag-speedNow*speedNow/mu);
+      const periAlt=(isFinite(a)&&a>0) ? a*(1-eMag)-SOLAR_BODIES.earth.radius : -1e9;
+      const PK=this.app.mission.parking;
+      if (periAlt>(PK.altKm-25)*1000){
+        this.phase='coast_leo'; this.phaseStart=p.time; this.explain('coast_leo');
+        this.app.toast.show('🛰️ Órbita de aparcamiento '+(periAlt/1000).toFixed(0)+' × '+((a*(1+eMag)-SOLAR_BODIES.earth.radius)/1000).toFixed(0)+' km', 6000);
+        return controls;
+      }
+      if (speedNow>=vCirc*1.06){ this.stop('⚠️ Circularización fallida — velocidad excesiva.'); return null; }
+      if (preState.fuelPercent<=0){ this.stop('⚠️ Sin combustible durante la circularización.'); return null; }
       return controls;
     }
 
@@ -3606,8 +3796,42 @@ class MissionAutopilot {
       const dir = speedNow>0.5 ? norm3({x:p.u,y:p.v,z:p.w}) : FRAME_ROTATION({x:0,y:1,z:0});
       const steer=p.autopilotSteer(dir);
       controls.pitch=steer.pitch; controls.yaw=steer.yaw; controls.roll=steer.roll; controls.throttle=0; controls.timeScale=10;
-      if (p.time-this.phaseStart>60){
-        const rNow=SOLAR_BODIES.earth.radius+preState.altitude, rApo=SOLAR_BODIES.moon.a;
+      // Apolo 11 real: ~1,75 vueltas en la orbita de aparcamiento antes de la TLI (opt-in: mission.parking.revs)
+      const PK=this.app.mission && this.app.mission.parking;
+      let waitS=60;
+      if (PK){
+        const rNow0=SOLAR_BODIES.earth.radius+preState.altitude, GM0=G*SOLAR_BODIES.earth.mass;
+        const sma=1/(2/Math.hypot(p.x,p.y,p.z)-speedNow*speedNow/GM0);
+        waitS=PK.revs*2*Math.PI*Math.sqrt(sma*sma*sma/GM0);
+        const tLeft=waitS-(p.time-this.phaseStart);
+        controls.timeScale = tLeft>120 ? Math.min(PK.warp||1000, tLeft/4) : 10;
+        // Ventana de la TLI: pasadas las vueltas minimas se espera al punto de la orbita opuesto a donde estara la Luna
+        // al llegar (semiperiodo de la elipse de transferencia). Igual que el Apolo real, que encendia sobre el Pacifico.
+        if (tLeft<=0 && PK.waitWindow!==false){
+          const rN=Math.hypot(p.x,p.y,p.z), rM=SOLAR_BODIES.moon.a, rAp=(PK.tliApoKm||SOLAR_BODIES.moon.a/1000)*1000;
+          const aT=(rN+rAp)/2, eT=(rAp-rN)/(rAp+rN);
+          // tiempo y anomalia verdadera al cruzar la distancia de la Luna en la elipse de transferencia
+          const cosE=Math.max(-1,Math.min(1,(1-rM/aT)/eT)), E=Math.acos(cosE), tHalf=Math.sqrt(aT*aT*aT/GM0)*(E-eT*Math.sin(E));
+          const cosNu=Math.max(-1,Math.min(1,(aT*(1-eT*eT)/rM-1)/eT)), nu=Math.acos(cosNu);
+          const eP=positionOf('earth',p.time), mP=positionOf('moon',p.time+tHalf);
+          const hxx=p.y*p.w-p.z*p.v, hyy=p.z*p.u-p.x*p.w, hzz=p.x*p.v-p.y*p.u, n=norm3({x:hxx,y:hyy,z:hzz});
+          let A=norm3({x:mP.x-eP.x,y:mP.y-eP.y,z:mP.z-eP.z});            // direccion de la Luna a la llegada
+          const an=A.x*n.x+A.y*n.y+A.z*n.z; A=norm3({x:A.x-an*n.x,y:A.y-an*n.y,z:A.z-an*n.z});
+          // salida = llegada girada -nu alrededor de la normal (Rodrigues, A perpendicular a n)
+          const nxA={x:n.y*A.z-n.z*A.y,y:n.z*A.x-n.x*A.z,z:n.x*A.y-n.y*A.x}, c=Math.cos(nu), sn=Math.sin(nu);
+          const Dp={x:A.x*c-nxA.x*sn,y:A.y*c-nxA.y*sn,z:A.z*c-nxA.z*sn};
+          const rh=norm3({x:p.x,y:p.y,z:p.z});
+          const cx=rh.y*Dp.z-rh.z*Dp.y, cy=rh.z*Dp.x-rh.x*Dp.z, cz=rh.x*Dp.y-rh.y*Dp.x;
+          let ang=Math.atan2(cx*n.x+cy*n.y+cz*n.z, rh.x*Dp.x+rh.y*Dp.y+rh.z*Dp.z) - (PK.tliLeadDeg||0)*Math.PI/180;
+          if (ang<0) ang+=2*Math.PI;
+          const omega=speedNow/rN, tGo=ang/omega;
+          const per=2*Math.PI/omega, inWindow = tGo<=2 || tGo>=per-8;   // ya en el punto (o lo acaba de pasar)
+          controls.timeScale = Math.max(1, Math.min(200, tGo/4));
+          if (!inWindow) return controls;
+        }
+      }
+      if (p.time-this.phaseStart>waitS){
+        const rNow=SOLAR_BODIES.earth.radius+preState.altitude, rApo=(PK&&PK.tliApoKm)?PK.tliApoKm*1000:SOLAR_BODIES.moon.a;
         const a=(rNow+rApo)/2, GM=G*SOLAR_BODIES.earth.mass;
         this.targetSpeedTLI=Math.sqrt(GM*(2/rNow-1/a));
         this.phase='tli_burn'; this.phaseStart=p.time; this.explain('tli_burn');
@@ -3621,8 +3845,22 @@ class MissionAutopilot {
       const steer=p.autopilotSteer(dir);
       controls.pitch=steer.pitch; controls.yaw=steer.yaw; controls.roll=steer.roll;
       controls.throttle = speedNow<this.targetSpeedTLI ? 1 : 0; controls.timeScale=1;
-      if (speedNow>=this.targetSpeedTLI){ this.phase='coast_tli'; this.phaseStart=p.time; this.explain('coast_tli'); }
+      if (speedNow>=this.targetSpeedTLI){
+        const TP=this.app.mission && this.app.mission.transposition;
+        this.phase = TP ? 'transposicion' : 'coast_tli'; this.phaseStart=p.time; this.explain(this.phase);
+      }
       if (preState.fuelPercent<=0){ this.stop('⚠️ Sin combustible durante la inyección translunar.'); return null; }
+      return controls;
+    }
+
+    if (this.phase==='transposicion'){
+      // Fase 4 (guionizada, solo visual): el CSM se separa de la S-IVB, gira 180 grados, se acopla al LM y lo extrae. La fisica sigue
+      // siendo un unico vehiculo; solo se baja el reloj a x1 durante durS segundos para que se vea.
+      this.explain('transposicion');
+      const dur=(this.app.mission.transposition&&this.app.mission.transposition.durS)||24;
+      controls.throttle=0; controls.timeScale=1;
+      if (speedNow>0.5){ const st=p.autopilotSteer(norm3({x:p.u,y:p.v,z:p.w})); controls.pitch=st.pitch; controls.yaw=st.yaw; controls.roll=st.roll; }
+      if (p.time-this.phaseStart>=dur){ this.phase='coast_tli'; this.phaseStart=p.time; this.explain('coast_tli'); }
       return controls;
     }
 
@@ -3750,8 +3988,11 @@ class MissionAutopilot {
 
       if (alt<=2 && Math.abs(vertSpeed)<3 && horizSpeed<5 && this.app.mission && this.app.mission.returnTrip){
         // Apolo con regreso: tras el alunizaje la mision continua (estancia, despegue lunar, regreso, amerizaje)
-        p.u=0; p.v=0; p.w=0; this._ret=null; this.phase='ret_wait'; this.phaseStart=p.time;
-        this.app.toast.show('🎉 ¡El Águila ha alunizado! Estancia breve en la superficie y vuelta a casa.', 7000);
+        p.u=0; p.v=0; p.w=0;
+        // El margen de alunizaje admite hasta 2 m de altitud pero el congelado exige <=0.01: se clava la nave al radio lunar.
+        { const rr0=Math.hypot(p.x,p.y,p.z), rBody=SOLAR_BODIES.moon.radius; if (rr0>1){ p.x*=rBody/rr0; p.y*=rBody/rr0; p.z*=rBody/rr0; } }
+        this._ret=null; this.phase='ret_wait'; this.phaseStart=p.time;
+        this.app.toast.show('🎉 ¡El Águila ha alunizado! Estancia de 21 h en la superficie y vuelta a casa.', 7000);
         controls.throttle=0; controls.timeScale=1; return controls;
       }
       if (alt<=2 && Math.abs(vertSpeed)<3 && horizSpeed<5){
@@ -3773,8 +4014,15 @@ class MissionAutopilot {
 
 /* ---------- APP ---------- */
 class RocketSimApp {
-  constructor(){
-    this.physics=new RocketPhysics();
+  // Al terminar el piloto automatico (active=false) la fase pasaba a null y el renderizador
+  // interpretaba "sandbox": volvian a aparecer los SRB y el ET ya descartados (los dos tubos
+  // laterales junto al Orbiter al acoplar). En las misiones ISS/Shuttle/Artemis se conserva la
+  // ultima fase para que la visibilidad de etapas siga la etapa fisica real.
+  _keepPhaseAfterEnd(){
+    const t=this.mission && this.mission.type;
+    return (t==='shuttle'||t==='iss'||t==='artemis') && !!(this.missionAuto && this.missionAuto.phase);
+  }
+  constructor(){    this.physics=new RocketPhysics();
     this.sound=new SoundSystem();
     this.toast=new ToastSystem();
     this.hasOrbited=false; this.inReentry=false; this.hasBeenHigh=false;
@@ -4375,7 +4623,7 @@ class RocketSimApp {
     this.checkMissionProgress(state);
     if (this.mission) this.updateMissionHud(state);
     if (this.mapOpen) this.drawMap(state);
-    else this.renderer.update(state, rawDt, (this.missionAuto && this.missionAuto.active) ? this.missionAuto.phase : null);
+    else this.renderer.update(state, rawDt, (this.missionAuto && (this.missionAuto.active || this._keepPhaseAfterEnd())) ? this.missionAuto.phase : null);
     requestAnimationFrame(()=>this.loop());
   }
   updateMissionHud(state){
